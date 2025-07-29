@@ -197,3 +197,4 @@
 - Use `Ctrl+l` to redraw screen
 - Use `:set paste` before pasting to preserve formatting
 - Use `:set nopaste` after pasting
+- You'd never use all these, so skip wasting time your time on vim
