@@ -1,63 +1,44 @@
-# Linux Helpbook
+# Linux, from the command line
 
-Learn to understand a Linux system before changing it. This course is for students and junior engineers starting from the command line, with explanations of what each command does, how to read its output and when its results are not enough.
+A practical manual for understanding Linux and investigating it safely. Start with the shell, paths and text, then work through access control, processes, system resources, storage, networking and services.
 
-## Start here
+## Chapters
 
-1. Read [practice environment guidance](00-start-here/00-setup.md). The course uses disposable environments, never production systems.
-2. Read [how to use the course](00-start-here/01-how-to-use-this-repo.md).
-3. Follow [ROADMAP.md](ROADMAP.md) for the lesson order, prerequisites, level and estimated study hours.
-4. Use the [glossary](glossary.md) when a term is unfamiliar.
+1. [How a Linux system fits together](chapters/01-system.md)
+2. [The shell and commands](chapters/02-shell.md)
+3. [Files, directories and paths](chapters/03-files-and-paths.md)
+4. [Reading and searching text](chapters/04-text.md)
+5. [Users, groups and permissions](chapters/05-permissions.md)
+6. [Processes and signals](chapters/06-processes.md)
+7. [CPU, memory and load](chapters/07-resources.md)
+8. [Disks and filesystems](chapters/08-storage.md)
+9. [Networking from the command line](chapters/09-networking.md)
+10. [Boot, services and logs](chapters/10-services.md)
+11. [Software and packages](chapters/11-packages.md)
+12. [Troubleshooting without guessing](chapters/12-troubleshooting.md)
+13. [Security basics](chapters/13-security.md)
+14. [Small shell scripts](chapters/14-shell-scripts.md)
+15. [Connect to another machine with SSH](chapters/15-ssh.md)
+16. [Archives and compression](chapters/16-archives.md)
 
-**Build status:** this is the first course increment, not a completed fundamentals-to-advanced course. Two lessons have sandbox execution evidence and are under editorial review: [Identify the Running Kernel](01-fundamentals/01-running-kernel.md) and [Identify the Installed Distribution](01-fundamentals/02-distribution.md). Remaining lessons are explicitly marked planned. VM provisioning has not been tested end to end; the commands were run in an already provisioned isolated Debian sandbox.
+The chapters are written as a start-to-finish path, but each can also be read on its own. Concepts build from earlier material, especially shell quoting, paths and process identity.
 
-## Course structure
+## Before you start
 
-```text
-README.md
-ROADMAP.md
-AGENTS.md
-STYLE_GUIDE.md
-glossary.md
-00-start-here/
-01-fundamentals/
-02-intermediate/     planned
-03-advanced/         planned
-labs/
-  verification/
-cheatsheets/         planned
-CHANGELOG.md
-```
+Use a Linux machine or Linux virtual machine with an ordinary user account and a terminal. A disposable VM is a useful choice if you intend to try administrative changes. Windows Subsystem for Linux also works for many command-line examples, but networking and service management can differ from a conventional Linux host. Installation and VM setup are outside this manual's scope.
 
-Fundamentals introduce one concept at a time. Intermediate lessons apply prerequisite concepts to a bounded task. Advanced lessons examine one deeper mechanism or failure. Planned directories are not populated with placeholder lessons just to make the tree look finished.
+Shell examples use Bash and common GNU utilities unless stated otherwise. Minimal containers may omit `man`, `less`, `file`, SSH, procps or networking utilities. A missing command does not mean Linux is broken: identify the distribution, then use its supported package manager if installation is authorized. You do not need root access for most inspection examples.
 
-Each lesson follows the [style guide](STYLE_GUIDE.md): learning outcomes, why the problem matters, a mental model, explained hands-on commands with real output, verification, common mistakes, troubleshooting, interview questions, takeaways, next steps and official further reading.
+Read chapters 1–5 first if you are new to the command line, then continue in order. Later chapters refer back to quoting, streams, permissions and process identity rather than reteaching them. No separate labs or helper scripts are required.
 
-Separate labs and one-page cheatsheets will follow their prerequisite lessons. No cloud lab or paid resource is required by the initial lesson. Future cloud labs must state costs and end with verified teardown.
+## How to use the examples
 
-## Verification you can inspect
+Commands are shown as text for a terminal. A leading `$` in other documentation is usually a prompt, not part of the command. Read each explanation before running a command. Some examples only inspect information; others create files, contact remote services, change permissions or affect running processes. Those effects are called out in the chapter.
 
-[CHANGELOG.md](CHANGELOG.md) records per-lesson dates, exact tool versions, evidence and limitations. Execution evidence lives under [labs/verification](labs/verification/). A dated check proves behavior in that environment, not on every Linux installation.
+Displayed output is illustrative unless identified otherwise. Your distribution and machine will report different names, versions, addresses, counts and service states. Check the help and manual pages installed on your system when options or output differ.
 
-Anything not exercised is marked `UNVERIFIED`. Syntax checks and link checks are reported separately from command execution. The current environment does not establish working systemd service management or a tested VM lifecycle.
+## Scope
 
-## Existing Helpbook material
+This manual covers common Linux command-line concepts and basic administration. It is not a distribution installation guide, a security certification, or authorization to change a production system. For consequential changes, follow the system owner's approved procedures.
 
-These pages remain available while reviewed replacements are built. They do not yet follow the new lesson template or its complete command-verification contract:
-
-- [Existing fundamentals](fundamentals/README.md)
-- [Command reference](commands/commands.md)
-- [Shell scripting](shell-scripting/scripting.md)
-- [Troubleshooting](troubleshooting/)
-- [Vim](vim/vim.md)
-- [Earlier verification scope](VERIFICATION.md)
-
-Useful explanations, attribution and safe test tooling will be preserved during migration. Do not assume the earlier verification notes cover the new course.
-
-## Contributing and maintenance
-
-Read [AGENTS.md](AGENTS.md) and [STYLE_GUIDE.md](STYLE_GUIDE.md) before writing. Read the roadmap, prior lesson and glossary before each new lesson. Verify its commands in a suitable isolated environment, then update its evidence, roadmap and changelog.
-
-Re-check lessons every three to six months and after relevant tool changes. This is a maintenance policy, not a scheduled automation. Changes go through a review branch and pull request; the owner retains merge control.
-
-No license has been selected for this repository. This change does not add or imply a license.
+The explanations and examples in this edition were written and edited for this manual. Technical references link to the upstream project or standard that documents each tool or behavior. The repository's existing licensing status is unchanged; no new license is granted here.
