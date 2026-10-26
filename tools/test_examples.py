@@ -7,8 +7,12 @@ Never use this harness to run arbitrary fenced examples from an untrusted repo.
 from pathlib import Path
 import os
 import re
+import shutil
+import socket
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -102,6 +106,64 @@ class Examples(unittest.TestCase):
         blobs = list(Path(self.temp.name).rglob('sample.bin'))
         self.assertEqual(len(blobs), 1)
         self.assertEqual(blobs[0].stat().st_size, 1024 * 1024)
+
+    def test_practice_pipeline_exit_statuses(self):
+        text = (ROOT / 'fundamentals/13-practice-labs.md').read_text()
+        result = self.bash(block_after(text, '## 1.'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for expected in ['Match status: 0', 'No-match status: 1',
+                         'Read-error status: 2', 'Pipeline without pipefail: 0',
+                         'Pipeline with pipefail: 2']:
+            self.assertIn(expected, result.stdout)
+
+    def test_practice_deleted_open_file(self):
+        text = (ROOT / 'fundamentals/13-practice-labs.md').read_text()
+        match = re.search(r'```python\n(.*?)```', text, re.S)
+        self.assertIsNotNone(match)
+        assert match is not None
+        result = subprocess.run([sys.executable, '-'], input=match.group(1),
+                                cwd=self.temp.name, env=self.env, text=True,
+                                capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for expected in ['Name exists: False', 'Link count: 0',
+                         'Logical bytes: 1048576', "Still readable: b'xxxx'",
+                         '(deleted)']:
+            self.assertIn(expected, result.stdout)
+
+    def test_practice_http_error_statuses(self):
+        if shutil.which('curl') is None:
+            self.skipTest('curl is not installed')
+        text = (ROOT / 'fundamentals/13-practice-labs.md').read_text()
+        section = text.split('## 3.', 1)[1]
+        blocks = re.findall(r'```bash\n(.*?)```', section, re.S)
+        with socket.socket() as sock:
+            sock.bind(('127.0.0.1', 0))
+            port = sock.getsockname()[1]
+        start = blocks[0].replace('8765', str(port))
+        start = start.replace('python3 -m http.server', 'exec python3 -m http.server')
+        server = subprocess.Popen(['bash', '--noprofile', '--norc', '-c', start],
+                                  cwd=self.temp.name, env=self.env,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            for _ in range(30):
+                self.assertIsNone(server.poll(), 'lab server exited before readiness')
+                probe = subprocess.run(['curl', '--silent', '--fail', '--max-time', '1',
+                                        f'http://127.0.0.1:{port}/'],
+                                       capture_output=True, text=True)
+                if probe.returncode == 0:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail('lab server did not become ready')
+            self.assertEqual(probe.stdout, 'service is reachable\n')
+            result = self.bash('set +e\n' + blocks[1].replace('8765', str(port)))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for expected in ['HTTP 404', 'curl status without --fail: 0',
+                             'curl status with --fail: 22', 'service is reachable']:
+                self.assertIn(expected, result.stdout)
+        finally:
+            server.terminate()
+            server.wait(timeout=5)
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
