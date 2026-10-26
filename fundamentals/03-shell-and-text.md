@@ -1,32 +1,52 @@
-# 3. Search logs and build useful pipelines
+# 3. Run shell commands and process text
 
-Use the [practice files](01-how-linux-works.md). The log formats below are small,
-fictional fixtures, not a parser for arbitrary application logs or CSV.
+A shell is both a command launcher and a small language. Before a program runs, the shell recognizes operators such as `|` and `>`, expands variables and wildcards, and builds its argument list. Understanding that order prevents common mistakes: quote a path with spaces, and quote a search pattern when another program—not the shell—should interpret it.
 
-## Find an error and keep its line number
+## Arguments, quotes, and filename patterns
+
+```bash
+file="$LINUX_LAB/notes/file with spaces.txt"
+printf 'path: %s\n' "$file"
+cat "$file"
+printf '%s\n' "$LINUX_LAB"/logs/*.log
+```
+
+An assignment stores text in `file`; `"$file"` expands to one argument even with spaces. Without quotes, spaces split words and wildcard characters may expand. In the last command, the quoted directory prefix stays literal while `*.log` expands to matching filenames. A quoted `'*'` would be passed literally. If there are no matches, Bash normally leaves an unmatched pattern unchanged; shell options can alter this behavior.
+
+## Standard streams and pipelines
+
+A process normally reads standard input (fd 0), writes normal results to standard output (fd 1), and writes diagnostics to standard error (fd 2). Redirection connects those streams to files; a pipe connects one process's output to another's input.
+
+```bash
+grep '^ERROR ' "$LINUX_LAB/logs/app.log" > "$LINUX_LAB/errors.txt"
+grep ERROR "$LINUX_LAB/missing.log" 2> "$LINUX_LAB/read-errors.txt"
+grep '^ERROR ' "$LINUX_LAB/logs/app.log" | wc -l
+```
+
+`>` creates or truncates the destination before the command runs; it captures stdout, not stderr. `2>` redirects diagnostics. `|` sends the left command's stdout to the right command's stdin. The final pipeline counts matching lines. Never redirect a transformation to its own input path: truncation can happen before the reader opens it.
+
+## Exit status is evidence
 
 ```bash
 grep -n 'ERROR' "$LINUX_LAB/logs/app.log"
-grep -in 'error' "$LINUX_LAB/logs/app.log"
-grep -n -C 1 'db refused' "$LINUX_LAB/logs/app.log"
-grep -v '^INFO' "$LINUX_LAB/logs/app.log"
+printf 'grep status=%s\n' "$?"
+grep 'NO_SUCH_TEXT' "$LINUX_LAB/logs/app.log"
+printf 'no-match status=%s\n' "$?"
 ```
 
-`-n` prints line numbers, `-i` ignores case, `-C 1` includes one context line on
-either side and `-v` excludes matches. Expect ERROR lines 2, 4 and 5. Use `-F`
-for literal text containing characters you do not want interpreted as a regex.
+`grep -n` prints matching line numbers and text. GNU grep uses status 0 for a match, 1 for no match, and usually 2 for an error. `$?` is the immediately preceding command's status, so print it before running another command. In a pipeline, Bash normally reports the last command's status; `set -o pipefail` makes a failing earlier stage count too. See [pipeline practice](13-practice-labs.md). Deliberate failures can interrupt scripts using `set -e`.
 
-## Count repeated errors
+## Search and count repeated lines
 
 ```bash
+grep -n -i -C 1 'db refused' "$LINUX_LAB/logs/app.log"
+grep -v '^INFO' "$LINUX_LAB/logs/app.log"
 grep '^ERROR ' "$LINUX_LAB/logs/app.log" | sort | uniq -c | sort -nr
 ```
 
-Read left to right: select errors, group equal lines, count adjacent duplicates,
-then sort counts numerically in reverse order. Expect `ERROR api timeout` twice
-and `ERROR db refused` once. `uniq` alone does not combine separated duplicates.
+`-i` ignores case; `-C 1` prints one context line on each side; `-v` selects nonmatching lines. The pattern is a regular expression (`^` anchors at line start); `-F` selects literal-string matching. The pipeline selects error lines, sorts identical records together, counts adjacent duplicates, then sorts numerically in reverse order. Expect `ERROR api timeout` twice and `ERROR db refused` once. `uniq -c` alone does not combine duplicates separated by other lines.
 
-## Select fields and filter by a value
+## Select fields from structured-looking text
 
 ```bash
 awk '$4 >= 500 {print $1, $3, $4}' "$LINUX_LAB/logs/access.log"
@@ -35,12 +55,9 @@ cut -d, -f1,3 "$LINUX_LAB/data/report.csv"
 awk -F, 'NR > 1 && $2 == "prod" {total += $3} END {print total+0}' "$LINUX_LAB/data/report.csv"
 ```
 
-The access fixture is whitespace-separated: client, method, path, status,
-duration. There are two 500 responses. `-F,` changes awk's field separator; `NR
-> 1` skips the CSV header. The production request total is `165`. These tools
-are not a full CSV parser when quoted fields can contain commas or newlines.
+The fixture's access records are whitespace-separated: client, method, path, status, duration. Awk's `$4` is status; the first query prints client, path, status for codes at least 500, and the next counts them (expect 2). `cut -d, -f1,3` uses comma delimiter and selects fields one and three. `awk -F,` sets the field separator; `NR > 1` skips the header and the condition selects `prod` rows. The fixture total is 165. These simple comma splits are not a full CSV parser for quoted fields containing commas or newlines.
 
-## Preview a text change before overwriting anything
+## Preview a text transformation
 
 ```bash
 sed 's/environment=staging/environment=production/' "$LINUX_LAB/config/app.conf"
@@ -48,47 +65,14 @@ sed 's/environment=staging/environment=production/' "$LINUX_LAB/config/app.conf"
 diff -u "$LINUX_LAB/config/app.conf" "$LINUX_LAB/config/app.preview"
 ```
 
-`sed` prints a transformed copy by default. `diff -u` shows the changed line;
-status 1 means files differ, not that diff failed. Do not redirect a filter's
-output to its own input file: the shell may truncate the input before reading it.
+`sed 's/old/new/'` substitutes the first match on each input line and prints the result; it does not edit the source. The second command saves that output separately. `diff -u` shows changed lines with context. Status 1 means files differ; status 0 means identical. Review output before replacing any original file.
 
-## Quote paths, and separate results from diagnostics
+**Try it:** Save only error lines to a separate fixture file and count them. Check output and status rather than assuming a quiet command succeeded.
 
 ```bash
-file="$LINUX_LAB/notes/file with spaces.txt"
-cat "$file"
-grep ERROR "$LINUX_LAB/logs/app.log" > "$LINUX_LAB/errors.txt"
-grep ERROR "$LINUX_LAB/missing.log" 2> "$LINUX_LAB/read-errors.txt"
-printf 'grep exit status: %s\n' "$?"
-cat "$LINUX_LAB/read-errors.txt"
-```
-
-Quoted `"$file"` stays one argument. `>` captures stdout; `2>` captures stderr.
-GNU grep returns 0 for a match, 1 for no match and usually 2 for an error. Capture
-`$?` before another command changes it. Run deliberate-failure examples outside
-blanket `set -e` handling. [Practice lab 1](13-practice-labs.md) compares pipeline
-statuses with and without `pipefail`.
-
-## Practice
-
-Print the two most frequent client IPs in the access fixture. Extract only the
-ERROR lines, without changing the original log.
-
-<details>
-<summary>One answer</summary>
-
-```bash
-awk '{print $1}' "$LINUX_LAB/logs/access.log" | sort | uniq -c | sort -k1,1nr -k2,2 | head -n 2
 grep '^ERROR ' "$LINUX_LAB/logs/app.log" > "$LINUX_LAB/error-only.log"
+wc -l "$LINUX_LAB/error-only.log"
+printf 'grep status=%s\n' "$?"
 ```
 
-The top clients are documentation addresses `192.0.2.10` and `192.0.2.11`, each
-with two requests. They are invented fixture data, not real traffic.
-
-</details>
-
-[Manual: grep](https://man7.org/linux/man-pages/man1/grep.1.html)
-· [awk](https://man7.org/linux/man-pages/man1/awk.1p.html)
-· [Bash pipelines and quoting](https://man7.org/linux/man-pages/man1/bash.1.html)
-· [More Bash examples](../shell-scripting/scripting.md)
-· [Previous](02-filesystem-and-paths.md) · [Index](README.md) · [Next](04-users-and-access.md)
+[Manual: grep](https://man7.org/linux/man-pages/man1/grep.1.html) · [awk](https://man7.org/linux/man-pages/man1/awk.1p.html) · [Bash quoting and pipelines](https://man7.org/linux/man-pages/man1/bash.1.html) · [Shell scripting](../shell-scripting/scripting.md) · [Previous](02-filesystem-and-paths.md) · [Index](README.md) · [Next](04-users-and-access.md)

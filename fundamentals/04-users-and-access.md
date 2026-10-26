@@ -1,9 +1,8 @@
-# 4. Inspect and fix file access
+# 4. Understand users, groups, and access
 
-Use the [practice setup](01-how-linux-works.md), as your ordinary user. Do not
-use recursive permission resets or `sudo` to hide an unexplained access error.
+Every process runs with user and group credentials. For an ordinary file, Linux checks the owner's permissions first, then the matching group permissions, then the permissions for everyone else. Directories use the same mode bits with different effects: read lists names, execute (`x`) searches/traverses names. This distinction explains why a readable file can still be unreachable through a parent directory.
 
-## See who you are and which groups apply
+## Inspect the identity used by this shell
 
 ```bash
 whoami
@@ -13,12 +12,9 @@ id -G
 getent passwd "$(id -u)"
 ```
 
-`id` shows your current process credentials and groups. `getent` asks the
-configured account database, which is not necessarily only `/etc/passwd`.
-A running service may have different credentials from your login session. A
-new group assignment does not retroactively change every running process.
+`whoami` prints the effective username. `id` reports user/group names and numeric IDs; `-u` prints only the effective UID and `-G` prints group IDs. `getent passwd KEY` queries the configured account database (which can include network sources), using the UID produced by `$(...)`. Account records are not proof that another service uses the same credentials. A process keeps its credentials; adding a user to a group does not update already-running processes.
 
-## Read the mode and ownership
+## Read owner, mode, and file type
 
 ```bash
 ls -ld "$LINUX_LAB" "$LINUX_LAB/config"
@@ -26,11 +22,9 @@ ls -l "$LINUX_LAB/config/private.txt"
 stat -c '%A %a %U:%G %n' "$LINUX_LAB/config/private.txt"
 ```
 
-The setup gives `private.txt` mode `600`: its owner can read/write it, while
-group and other have no mode-bit access. `ls -ld` inspects a directory itself
-instead of listing its children. An initial `d` identifies a directory.
+`ls -ld` shows each named directory itself; without `-d`, `ls` lists contents. Long listings show type/mode, owner, group, size, and time. `stat -c` uses GNU format escapes: `%A` symbolic mode, `%a` octal mode, `%U:%G` owner/group names, `%n` path. The fixture's `private.txt` is mode `600`: its owner has read/write, group and others have no mode-bit access. The initial `-` in a mode display indicates a regular file; `d` indicates a directory.
 
-## Make one lab script executable
+## Change only the permission you intend
 
 ```bash
 bash "$LINUX_LAB/bin/hello.sh"
@@ -39,12 +33,11 @@ chmod u+x "$LINUX_LAB/bin/hello.sh"
 stat -c '%A %n' "$LINUX_LAB/bin/hello.sh"
 ```
 
-Both invocations print `hello from the lab`. The first asks Bash to read the
-file; direct execution also needs execute permission and a usable interpreter.
-A `noexec` mount can still block direct execution. `u+x` changes only the owner's
-execute bit, unlike assigning a whole numeric mode indiscriminately.
+`bash FILE` asks Bash to read the script, so the file need not have execute permission. `chmod u+x FILE` adds execute permission for the owner (`u`) without replacing other mode bits. Direct execution also requires a valid interpreter line and a filesystem that permits execution; a `noexec` mount can block it. Both fixture invocations print `hello from the lab` when Bash and execution are available.
 
-## Observe umask without changing your next terminal command
+Numeric modes encode owner/group/other read (`4`), write (`2`), and execute (`1`) bits. Thus `chmod 600 FILE` means owner read+write, no group/other access. Avoid broad recursive changes: directories need execute/search permission for traversal, unlike ordinary files.
+
+## Umask limits new permissions
 
 ```bash
 (
@@ -55,35 +48,18 @@ execute bit, unlike assigning a whole numeric mode indiscriminately.
 )
 ```
 
-On ordinary creation without inherited default ACLs, expect `600` and `700`.
-The parentheses isolate the umask change. Umask removes permissions from a
-program's requested creation mode; it does not alter existing files or add bits.
+In the subshell, `umask 077` removes group/other permissions from subsequently created objects. With the usual requested creation modes and no inherited default ACL, expect file `600` and directory `700`. The parentheses keep the umask change local to this compound command. Umask affects creation, not existing files, and cannot add permission bits that the program did not request.
 
-## Find which parent directory blocks access
-
-If installed, use `namei` to inspect the whole path, not just the final file:
+## Diagnose path traversal and ACLs
 
 ```bash
 namei -l "$LINUX_LAB/config/private.txt"
+getfacl "$LINUX_LAB/config/private.txt"
 ```
 
-Every parent needs search (`x`) permission for path traversal. A directory's
-`r` lets you list names; `x` lets you access a named entry. This is why
-`chmod -R 644 directory/` can break access. Use the focused
-[directory-permission lab](permissions.md) to reproduce that safely.
+If installed, `namei -l` displays each path component and its mode/owner. To reach a named file, a user needs search (`x`) permission on every parent directory. Directory `r` permits listing names; directory `x` permits lookup/traversal. `getfacl` displays access-control-list entries and the ACL mask, which can limit effective named-user/group permissions; the `acl` utilities may not be installed. SELinux/AppArmor policy, read-only mounts, or other constraints can deny access even when mode bits look permissive. Do not use `chmod 777` or disable protections as a diagnostic shortcut.
 
-For systems using ACLs, `getfacl "$LINUX_LAB/config/private.txt"` shows extra
-entries and the ACL mask. It needs the ACL tools package. SELinux/AppArmor and
-read-only mounts can deny an operation even when mode bits look sufficient.
-Do not disable those protections or use `chmod 777` as a diagnostic shortcut.
-
-## Practice
-
-Give only yourself read/write access to a new lab note. Inspect its numeric
-mode, then identify every directory on the path.
-
-<details>
-<summary>One answer</summary>
+**Try it:** Create a private note, set owner-only read/write access, inspect the numeric mode and each directory in its path.
 
 ```bash
 printf 'practice\n' > "$LINUX_LAB/notes/private-note.txt"
@@ -92,9 +68,4 @@ stat -c '%a %n' "$LINUX_LAB/notes/private-note.txt"
 namei -l "$LINUX_LAB/notes/private-note.txt"
 ```
 
-</details>
-
-[Manual: chmod](https://man7.org/linux/man-pages/man1/chmod.1.html)
-· [umask](https://man7.org/linux/man-pages/man2/umask.2.html)
-· [path resolution](https://man7.org/linux/man-pages/man7/path_resolution.7.html)
-· [Previous](03-shell-and-text.md) · [Index](README.md) · [Next](05-processes-and-signals.md)
+[Manual: chmod](https://man7.org/linux/man-pages/man1/chmod.1.html) · [umask](https://man7.org/linux/man-pages/man2/umask.2.html) · [Path resolution](https://man7.org/linux/man-pages/man7/path_resolution.7.html) · [Directory-permission lab](permissions.md) · [Previous](03-shell-and-text.md) · [Index](README.md) · [Next](05-processes-and-signals.md)

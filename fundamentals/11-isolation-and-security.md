@@ -1,93 +1,67 @@
-# 11. Inspect limits and security boundaries
+# 11. Understand Linux isolation and access controls
 
-Start by inspecting your own process and practice files. These commands do not
-create namespaces, alter cgroups, grant capabilities or disable policy.
+Linux security is layered. Namespaces give processes different views of resources; cgroups account for and constrain resource use; capabilities divide some privileged operations; file modes and ACLs govern discretionary access. Seccomp and Linux security modules add further restrictions. None is a magic label that proves a process is safe.
 
-## Find your shell's namespace memberships
+Use read-only checks on your own process and the disposable practice files. `/proc` visibility varies with kernel, permissions and container settings. These examples do not create namespaces, change limits or grant privileges.
+
+## Namespaces: which view does a process see?
 
 ```bash
 ls -l "/proc/$$/ns"
 readlink "/proc/$$/ns/net"
 readlink "/proc/$$/ns/mnt"
-readlink "/proc/$$/ns/user"
+readlink "/proc/$$/ns/pid"
 ```
 
-The links identify namespace objects. Compare two permitted processes to see
-whether they share a network or mount view. An identifier alone does not prove
-“this is secure” or “this is a container.” Ordinary Linux containers share the
-host kernel; their separate views are not the same boundary as a VM's kernel.
+`$$` is this Bash process ID. Namespace links identify the namespace objects for networking, mounts and process IDs. Compare permitted PIDs to see whether they share a view; a matching identifier indicates shared membership, not whether the overall system is secure. A container typically shares the host kernel even when it has separate views. A VM has a separate guest kernel. PID namespace behavior also makes the same process appear under different IDs in different views.
 
-## Check UID mapping and capability state
-
-```bash
-cat "/proc/$$/uid_map"
-cat "/proc/$$/gid_map"
-grep -E '^(Uid|Gid|CapEff|NoNewPrivs|Seccomp):' "/proc/$$/status"
-```
-
-Mapping rows describe inside ID, outside ID and range length, relative to the
-reader's namespace. `CapEff` is a hexadecimal effective-capability mask.
-`NoNewPrivs` concerns gaining privileges through exec; it does not mean the
-process has no privileges. `Seccomp: 2` means filter mode, not proof of a
-particular syscall allowlist. Do not infer host authority from a username alone.
-
-## Inspect resource membership separately from isolation
+## Cgroups: what resource budget applies?
 
 ```bash
 cat "/proc/$$/cgroup"
 findmnt -t cgroup,cgroup2
-ulimit -n
-ulimit -u
 ```
 
-Namespaces determine views; cgroups account for and constrain resources. A
-private PID list alone does not impose a memory budget. Cgroup v2 uses entries
-such as `0::/path`; v1 can show separate controller lines. Resolve the mounted
-hierarchy and ancestors before reading specific controller limits. The shell's
-`ulimit` values are inherited resource limits, not a complete container policy.
-Do not write new limits just to test their effect on a shared host.
+The first reports cgroup membership; the second shows mounted cgroup filesystems when `findmnt` is available. On cgroup v2, a line such as `0::/some/path` identifies membership relative to a hierarchy. Controller files such as `memory.current`, `memory.max`, `cpu.max`, and `memory.events` may be present at the resolved directory. cgroup namespaces can virtualize the visible paths, but membership/view separation alone does not impose a resource limit. v1 uses different controller paths. Parent cgroups can impose tighter limits than a leaf. Do not guess a filesystem path by concatenating membership text: mount roots and namespaces affect mapping. A membership path alone does not tell you the effective limit.
 
-## Find overly broad permissions in the lab
+## Capabilities: which privileged operations are available?
+
+```bash
+grep -E '^(Uid|Gid|CapInh|CapPrm|CapEff|CapBnd|NoNewPrivs|Seccomp):' "/proc/$$/status"
+cat "/proc/$$/uid_map"
+cat "/proc/$$/gid_map"
+```
+
+The status fields report numeric credentials, capability sets as hexadecimal masks, no-new-privileges state and seccomp mode. `CapEff` is the effective set now; it is not a human-readable list. `uid_map`/`gid_map` relate IDs inside this user namespace to IDs outside it. `NoNewPrivs: 1` prevents privilege gains through exec, but does not remove existing authority. `Seccomp: 2` indicates filter mode, not which system calls the filter allows. Do not infer host authority from a displayed username or mask alone. `capsh --print` can decode capabilities when the libcap tools are installed; inspect local help and avoid pasting sensitive process status publicly.
+
+## Permissions: follow the whole path
+
+After the shared setup in chapter 1:
+
+```bash
+id
+stat -c '%A %a %U:%G %n' "$LINUX_LAB/config/private.txt"
+namei -l "$LINUX_LAB/config/private.txt"
+```
+
+When the ACL utilities are installed, inspect the extra access entries too:
+
+```bash
+getfacl "$LINUX_LAB/config/private.txt"
+```
+
+The output includes ACL entries and the ACL mask, which can limit named-user or group permissions. If these tools are absent, skip this query; do not install software on a real host just to finish the lesson. Mode bits still do not describe SELinux/AppArmor rules, read-only mounts, or every access condition. A permission failure is evidence to inspect the applicable boundary, not a reason to run `chmod 777` or disable policy.
+
+For review, GNU `find` can locate group/other permission bits in the lab:
 
 ```bash
 find "$LINUX_LAB/config" -type f -perm /077 -print
-stat -c '%a %n' "$LINUX_LAB/config/private.txt"
 ```
 
-GNU find's `/077` means any group/other permission bit is set. It is a review
-filter, not proof every matching file is a security flaw. The dummy private file
-should be `600` and absent from that list. The normal app config may appear,
-but the parent temporary directory is private. Reachability and policy still
-matter; do not blanket-change permissions based only on this query.
+`-perm /077` matches any group or other bit. It flags candidates for review, not necessarily vulnerabilities; intended sharing and parent-directory reachability matter. No permissions are changed.
 
-If installed, `getfacl` inspects extended file access rules and `getcap` inspects
-file capabilities. A successful mode-bit check does not exclude SELinux or
-AppArmor denial. Diagnose the applicable policy rather than turning it off.
+## Practice: distinguish view from limit
 
-## Keep inspection output safe to share
+Record your shell's network namespace link and cgroup membership. Ask: which output indicates a different view, and which identifies resource accounting membership? If permitted, compare with a second process you own. Do not launch privileged containers or write cgroup controls for this exercise. Explain why neither output alone demonstrates a secure isolation boundary.
 
-Avoid posting full environments, process arguments or application logs without
-review: these may contain credentials. Read one required field instead. Do not
-run `sudo`, `chmod 777`, privileged containers or host-mount workarounds to make
-a denied command succeed. The denial is evidence about a boundary.
-
-## Practice
-
-Show only your shell's effective capability mask and open-file limit. Then find
-lab config files with group/other bits set without changing their permissions.
-
-<details>
-<summary>One answer</summary>
-
-```bash
-grep '^CapEff:' "/proc/$$/status"
-ulimit -n
-find "$LINUX_LAB/config" -type f -perm /077 -print
-```
-
-</details>
-
-[Manual: namespaces](https://man7.org/linux/man-pages/man7/namespaces.7.html)
-· [capabilities](https://man7.org/linux/man-pages/man7/capabilities.7.html)
-· [cgroup v2](https://docs.kernel.org/admin-guide/cgroup-v2.html)
-· [Previous](10-networking.md) · [Index](README.md) · [Next](12-performance-and-debugging.md)
+[Manual: namespaces](https://man7.org/linux/man-pages/man7/namespaces.7.html) · [capabilities](https://man7.org/linux/man-pages/man7/capabilities.7.html) · [cgroup v2](https://docs.kernel.org/admin-guide/cgroup-v2.html) · [Previous](10-networking.md) · [Index](README.md) · [Next](12-performance-and-debugging.md)

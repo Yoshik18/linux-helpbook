@@ -1,9 +1,19 @@
-# 2. Work with files, directories and archives
+# 2. Understand the filesystem and work with paths
 
-Run the [practice setup](01-how-linux-works.md) first. Every write below targets
-its private `$LINUX_LAB` directory, not a real service's files.
+Linux presents files through one directory tree rooted at `/`; storage devices are attached at mount points within that tree. A path names an entry, not necessarily unique data: hard links can name the same inode, while symbolic links store another path. This model matters when locating files, making backups, and interpreting links.
 
-## Create, copy and rename
+## Read paths from the current directory
+
+```bash
+pwd
+printf 'home=%s\n' "$HOME"
+ls -la /
+ls -ld "$LINUX_LAB" "$LINUX_LAB/config"
+```
+
+`/` is the root directory; `/home/alex` is an absolute path. `.` means the current directory, `..` its parent, and `~/notes` expands to a path under your home. `pwd` prints the working directory; `$HOME` is an environment variable. `ls -a` includes dotfiles, `-l` gives details, and `-d` reports the named directory itself rather than its contents. Quote variable-based paths so spaces remain part of one operand.
+
+## Create, copy, move, remove
 
 ```bash
 mkdir -p "$LINUX_LAB/work/reports"
@@ -13,16 +23,11 @@ mv "$LINUX_LAB/work/tasks.txt" "$LINUX_LAB/work/reports/tasks.txt"
 ls -lh "$LINUX_LAB/work/reports"
 ```
 
-`mkdir -p` creates missing parents and accepts an existing directory. `touch`
-creates an empty file or updates an existing file's timestamps. `cp` leaves the
-source in place; `mv` changes its location/name. Both can overwrite destinations:
-use `cp -i` or `mv -i` for a confirmation prompt when working interactively.
+`mkdir -p` creates missing parent directories and tolerates an existing directory. `touch` creates an empty file if absent, otherwise updates timestamps. `cp SOURCE DEST` copies while retaining the source; `mv SOURCE DEST` renames or relocates it. They may replace an existing destination; use `-i` for an interactive confirmation when appropriate. `ls -lh` lists the result with readable sizes.
 
-To remove a practice file deliberately, use `rm -i` with its exact path. There
-is no general undo. `rmdir` removes only an empty directory. Do not start with a
-recursive force-delete command.
+For cleanup, `rmdir DIR` removes only an empty directory. `rm -i FILE` prompts before removing the named file; removal generally has no undo. Inspect exact paths first. Avoid recursive force deletion, especially with variables or elevated privileges.
 
-## Read a file without opening an editor
+## Read without editing
 
 ```bash
 cat "$LINUX_LAB/config/app.conf"
@@ -31,12 +36,9 @@ tail -n 2 "$LINUX_LAB/logs/app.log"
 nl -ba "$LINUX_LAB/notes/todo.txt"
 ```
 
-Expect three configuration lines. `head` shows the beginning, `tail` the end and
-`nl -ba` numbers all lines. For a large file, use `less filename` instead of
-flooding the terminal. `tail -f filename` follows growth; Ctrl+C stops following.
-GNU `tail -F` also retries and follows the name across common log rotation cases.
+`cat` prints the whole file. `head -n 2` and `tail -n 2` show the first and last two lines; `nl -ba` numbers even blank lines. For large files, `less FILE` allows scrolling/search without dumping everything. `tail -f FILE` waits for appended data; Ctrl-C stops it. GNU `tail -F` also retries by filename across common log rotations.
 
-## Find files by name or size
+## Search by name or size
 
 ```bash
 find "$LINUX_LAB" -type f -name '*.log'
@@ -45,13 +47,9 @@ find "$LINUX_LAB" -type f -size +1M
 find "$LINUX_LAB" -type f -name '*.txt' -exec wc -l {} +
 ```
 
-Quote the pattern so `find`, not your current shell, interprets it. `-type f`
-selects regular files. The size query initially returns nothing. `-exec ... {} +`
-passes matching paths as separate arguments, including filenames with spaces.
-Preview matches before adding any mutating operation. Do not parse `ls` output
-as a general filename list.
+`find ROOT` walks from the specified root. `-type f` selects regular files; `-name` matches a filename pattern; quoted patterns prevent the shell expanding `*` first. `-size +1M` selects files larger than the unit threshold (GNU find uses 1 MiB here). `-exec wc -l {} +` passes batches of matched path operands safely, including names with spaces; `wc -l` counts newline characters. Preview results before adding actions that change files. Do not parse `ls` output as a filename list.
 
-## Inspect links and file identity
+## Links name data in different ways
 
 ```bash
 ln "$LINUX_LAB/notes/todo.txt" "$LINUX_LAB/work/todo-hardlink"
@@ -60,12 +58,9 @@ stat -c '%n inode=%i links=%h mode=%a' "$LINUX_LAB/notes/todo.txt" "$LINUX_LAB/w
 readlink "$LINUX_LAB/work/todo-shortcut"
 ```
 
-The hard-linked names share an inode and data on the same filesystem. A symlink
-stores a path; its relative target is resolved from the symlink's directory.
-`ln` refuses an existing destination here, so rerunning this section may report
-that the link already exists. It does not create another copy of the file.
+`ln` creates a hard link: both names share an inode and file data, on the same filesystem. `ln -s TARGET LINK` creates a symbolic link whose contents are a path; this relative target is resolved from the link's directory. `stat -c` selects a GNU format: `%n` name, `%i` inode number, `%h` hard-link count, `%a` numeric mode. `readlink` prints the stored target. Existing link names make these creation commands fail rather than overwrite them.
 
-## Create and inspect a backup archive
+## Archive a directory and compare a restore
 
 ```bash
 tar -czf "$LINUX_LAB/archive/notes.tar.gz" -C "$LINUX_LAB" notes
@@ -75,18 +70,9 @@ tar -xzf "$LINUX_LAB/archive/notes.tar.gz" -C "$LINUX_LAB/restored"
 diff -r "$LINUX_LAB/notes" "$LINUX_LAB/restored/notes"
 ```
 
-`-c` creates, `-t` lists, `-x` extracts, `-z` uses gzip and `-f` names the archive.
-`-C` changes the base directory for the operation. A successful `diff` prints
-nothing and returns zero. Extract unfamiliar archives only in an isolated,
-unprivileged environment after inspecting their paths and contents.
+For `tar`, `-c` creates, `-t` lists, `-x` extracts, `-z` selects gzip compression, and `-f FILE` names the archive. `-C DIR` changes directory before processing the following path; this stores `notes/` rather than an absolute path. `diff -r` compares directory contents recursively: no output and status 0 means equal; status 1 means differences. Inspect an unfamiliar archive's listing and extract in an isolated unprivileged location.
 
-## Practice
-
-Find all `.conf` files and count the lines in every `.txt` file without breaking
-on spaces. Create a compressed archive of `config/` without absolute paths.
-
-<details>
-<summary>One answer</summary>
+**Try it:** Find `.conf` files, count all `.txt` lines without breaking on spaces, then archive `config/` without an absolute path.
 
 ```bash
 find "$LINUX_LAB" -type f -name '*.conf'
@@ -94,9 +80,4 @@ find "$LINUX_LAB" -type f -name '*.txt' -exec wc -l {} +
 tar -czf "$LINUX_LAB/archive/config.tar.gz" -C "$LINUX_LAB" config
 ```
 
-</details>
-
-[Manual: find](https://man7.org/linux/man-pages/man1/find.1.html)
-· [tar](https://man7.org/linux/man-pages/man1/tar.1.html)
-· [inode](https://man7.org/linux/man-pages/man7/inode.7.html)
-· [Previous](01-how-linux-works.md) · [Index](README.md) · [Next](03-shell-and-text.md)
+[Manual: find](https://man7.org/linux/man-pages/man1/find.1.html) · [tar](https://man7.org/linux/man-pages/man1/tar.1.html) · [inode](https://man7.org/linux/man-pages/man7/inode.7.html) · [Previous](01-how-linux-works.md) · [Index](README.md) · [Next](03-shell-and-text.md)

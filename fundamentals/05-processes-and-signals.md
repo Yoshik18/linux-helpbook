@@ -1,105 +1,70 @@
-# 5. Find processes and manage your own jobs
+# 5. Processes, signals, and shell jobs
 
-Start with observation. A copied PID can eventually belong to a different
-process; do not signal a service merely because its name looks familiar.
+A **process** is a running program with its own address space and resources. A **thread** is an execution path within a process; threads share that process's memory and many resources. Linux schedules threads, so process-oriented tools may show one row per process or one row per thread depending on options. A PID is a temporary identifier, not a permanent identity: a process can exit and its PID can later be reused.
 
-## List processes with the fields you need
-
-```bash
-ps -eo pid,ppid,user,stat,pcpu,pmem,comm --sort=-pcpu
-ps -eo pid,ppid,user,stat,rss,comm --sort=-rss
-ps -p "$$" -o pid,ppid,stat,comm
-```
-
-`PID` identifies a process, `PPID` its parent, and `COMM` the command name.
-`RSS` is resident memory in KiB here. CPU percentage is averaged over the
-process's lifetime, not an instantaneous sample. Sorting depends on procps `ps`.
-
-The first STAT character matters: `R` is runnable/running, `S` interruptible
-sleep, `D` uninterruptible sleep, and `Z` a zombie already waiting to be reaped.
-A sleeping process is not automatically stuck. Extra STAT letters are modifiers.
-
-## Find a process by name, then inspect it
+## Observe before acting
 
 ```bash
+ps -eo pid,ppid,user,stat,etime,pcpu,rss,comm --sort=-pcpu
+ps -T -p "$$" -o pid,tid,stat,comm
 pgrep -a -x bash
-ps -p "$$" -o pid,ppid,lstart,etime,comm
 ```
 
-`pgrep -x` matches the exact process name and `-a` includes its command line.
-Arguments can contain secrets, so redact before sharing. `lstart` shows the
-start time and `etime` elapsed runtime. If installed, `pstree -p` helps show
-parent/child relationships; it is a view, not a reason to kill a whole tree.
+`ps -e` selects all processes; `-o` chooses columns; `--sort=-pcpu` orders highest CPU first (procps syntax). `PPID` is parent PID, `STAT` is state, `ETIME` elapsed runtime, and `RSS` is resident memory, commonly displayed in KiB. CPU values are sampled/averaged according to the tool and interval; a single list is not a live diagnosis. `ps -T` shows threads for the selected process, with `TID` identifying a thread. `pgrep -x` matches the exact process name and `-a` prints its command line; command lines may expose secrets, so redact them before sharing.
 
-## Start a short job and collect its exit status
+Common first-letter states include `R` runnable/running, `S` interruptible sleep, `D` uninterruptible sleep (often waiting on I/O), and `Z` exited but not yet reaped. A sleeping process is often healthy. A zombie has already exited: sending it a signal cannot make it exit again; its parent must collect its status. The remaining `STAT` characters are modifiers.
 
-```bash
-sleep 2 &
-child=$!
-ps -p "$child" -o pid,ppid,stat,comm
-jobs -l
-wait "$child"
-printf 'wait status: %s\n' "$?"
-```
+## Signals and safe shutdown
 
-`&` starts a background job, `$!` captures its PID and `wait` collects its exit
-status. Expect zero for this sleep. On a slow terminal it can finish before
-`ps` inspects it. `jobs` lists this shell's jobs, not every process on the host.
-In an interactive job-control shell, Ctrl+Z stops a foreground job, `bg` resumes
-it in the background and `fg` brings it back. Backgrounding is not supervision.
+A signal is a notification to a process, not a command to “kill” in the everyday sense. `SIGTERM` (15) requests termination and lets a program clean up; `SIGKILL` (9) cannot be caught and prevents cleanup. Start with observation, confirm the exact target and ownership, and prefer the application's documented shutdown method. PID reuse creates a race between looking up a PID and acting on it; do not paste a stale PID into `kill`.
 
-## Send SIGTERM only to a child created in this block
+This example targets only a child created in the same shell block:
 
 ```bash
 (
-    set +e
     sleep 30 &
     child=$!
-    ps -p "$child" -o pid,ppid,comm
+    ps -p "$child" -o pid,ppid,stat,comm
     kill -TERM "$child"
     wait "$child"
-    printf 'terminated child status: %s\n' "$?"
+    printf 'child status: %s\n' "$?"
 )
 ```
 
-This deliberately terminates only its own new sleep. Bash normally reports 143
-for SIGTERM (128 + signal 15); other shells/programs may present termination
-differently. SIGTERM gives an application a chance to handle shutdown. SIGKILL
-cannot be caught and skips application cleanup; do not make it the first step.
-A zombie has already exited, and a task stuck in a kernel wait may not disappear
-immediately even after a fatal signal.
+`$!` is the PID of the most recently started asynchronous command. `kill -TERM` requests a graceful stop; `wait` collects the child's status. Bash commonly reports 143 (128 + signal 15), but exact status presentation is shell-dependent. Do not escalate to `SIGKILL` just because a process is slow; a task in uninterruptible kernel sleep may not respond immediately, even to it.
 
-## Inspect your shell's files and limits
+## Jobs belong to a shell
 
 ```bash
+sleep 2 &
+job_pid=$!
+jobs -l
+wait "$job_pid"
+printf 'exit status: %s\n' "$?"
+```
+
+`&` runs a command asynchronously; `jobs` lists jobs managed by this shell, not all host processes. In an interactive job-control shell, Ctrl+Z suspends a foreground job, `bg` resumes it in the background, and `fg` returns it to the foreground. Closing the terminal or shell can affect jobs; backgrounding is not a service manager or durable scheduler.
+
+## Inspect process relationships and descriptors
+
+```bash
+ps -p "$$" -o pid,ppid,lstart,etime,comm
 ls -l "/proc/$$/fd"
 readlink "/proc/$$/cwd"
 ulimit -n
 ```
 
-Descriptors 0, 1 and 2 normally correspond to stdin/stdout/stderr. Other entries
-may be files, pipes or sockets. `ulimit -n` shows this shell's soft open-file
-limit; it is not a count of files currently open, nor proof of a service's limit.
-Permissions can restrict `/proc` inspection.
+`$$` is this shell's PID. `/proc/PID/fd` links show open descriptors (0, 1, and 2 normally represent standard input/output/error); access may be restricted. `readlink` reports the process working directory. `ulimit -n` reports this shell's soft open-file limit, not how many files are open and not necessarily a service's limit. Tools such as `pstree -p` can visualize parent/child relationships when installed; a tree does not imply that every descendant should be terminated.
 
 ## Practice
 
-Start a five-second sleep, capture its PID, inspect its parent and state, then
-wait for it without sending a signal. Explain why a normal sleep appears idle.
-
-<details>
-<summary>One answer</summary>
+Start `sleep 5` in the background, inspect its PID and state, then `wait` for it. Explain why it is normally sleeping rather than using CPU. No signal is needed.
 
 ```bash
 sleep 5 &
-child=$!
-ps -p "$child" -o pid,ppid,stat,comm
-wait "$child"
+p=$!
+ps -p "$p" -o pid,ppid,stat,comm
+wait "$p"
 ```
 
-</details>
-
-[Manual: ps](https://man7.org/linux/man-pages/man1/ps.1.html)
-· [signals](https://man7.org/linux/man-pages/man7/signal.7.html)
-· [wait](https://man7.org/linux/man-pages/man2/wait.2.html)
-· [Previous](04-users-and-access.md) · [Index](README.md) · [Next](06-memory-and-cpu.md)
+[ps manual](https://man7.org/linux/man-pages/man1/ps.1.html) · [Linux signals](https://man7.org/linux/man-pages/man7/signal.7.html) · [wait](https://man7.org/linux/man-pages/man2/wait.2.html) · [Previous](04-users-and-access.md) · [Index](README.md) · [Next](06-memory-and-cpu.md)

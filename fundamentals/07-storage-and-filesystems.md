@@ -1,58 +1,48 @@
-# 7. Find disk usage and inspect filesystems
+# 7. Understand filesystems and disk usage
 
-Start with the directory that cannot be written, not with random deletion.
-Use the [practice directory](01-how-linux-works.md) for write examples.
+When a system reports “no space,” distinguish the filesystem containing the path, its free data blocks, its available inodes, and the directories consuming space. Inspect first; do not delete files at random.
 
-## Check bytes and inodes on the affected filesystem
+## Map paths to mounted storage
 
 ```bash
-df -h "$LINUX_LAB"
-df -i "$LINUX_LAB"
-findmnt -T "$LINUX_LAB"
+findmnt -T "$HOME"
+df -h "$HOME"
+df -i "$HOME"
 lsblk -o NAME,TYPE,SIZE,FSTYPE,MOUNTPOINTS
 ```
 
-`df -h` shows filesystem capacity; `df -i` checks inodes. Many tiny files can
-exhaust inodes before bytes. `findmnt -T` identifies the mount containing a path;
-`lsblk` shows visible block-device layers, not every network or overlay mount.
-Older util-linux versions may need `MOUNTPOINT` instead of `MOUNTPOINTS`.
+A disk contains partitions; a partition may hold an LVM physical volume, logical volume, RAID device, or filesystem; a filesystem is then mounted at a directory. A mount makes a filesystem's contents visible at a path. `findmnt -T` identifies the mount covering a path. `df -h` reports filesystem capacity and used/available blocks; `df -i` reports inode capacity. Many small files can exhaust inodes even with bytes available. `lsblk` shows visible block-device relationships, not every network, bind, or overlay mount. Older util-linux releases may use `MOUNTPOINT` rather than `MOUNTPOINTS`.
 
-## Find which directory owns the usage
+## Find large directories without crossing mounts
 
 ```bash
-du -x -h --max-depth=1 "$LINUX_LAB"
-du -x -B1 --max-depth=2 "$LINUX_LAB" | sort -nr | head -n 10
-find "$LINUX_LAB" -type f -size +1M -printf '%s %p\n'
+du -x -h --max-depth=1 "$HOME"
+du -x -B1 --max-depth=2 "$HOME" | sort -nr | head -n 10
+find "$HOME" -type f -size +100M -print
 ```
 
-`du -x` stays on the same filesystem. Passing the directory includes hidden
-entries; an ordinary `*` glob does not. `-B1` gives allocated byte accounting
-for numeric sorting. `find -printf` is GNU syntax and prints logical file size
-here, which may differ from allocated blocks. Permission errors mean incomplete
-results. On a real host, narrow the target before doing a large tree walk.
+`du` totals disk blocks used by files beneath a directory; `-x` stays on one filesystem, `--max-depth` limits depth, and `-B1` reports byte units suitable for numeric sorting. `sort -nr` orders numeric values descending; `head -n 10` limits the displayed list. Unlike `df`, which reports a whole filesystem, `du` walks visible directory entries. It can be slow, permission-denied results are incomplete, and hard links, compression, reflinks, and snapshots complicate totals. Passing a directory includes hidden entries; shell glob `*` generally does not. `find` here lists names, not allocated size.
 
-## See why apparent size can mislead
+## Logical size differs from allocated space
+
+On the [shared practice files](01-how-linux-works.md), create the sparse file:
 
 ```bash
 truncate -s 1M "$LINUX_LAB/data/sparse.bin"
-stat -c 'length=%s blocks=%b block-unit=%B' "$LINUX_LAB/data/sparse.bin"
+stat -c 'length=%s bytes; blocks=%b; block-unit=%B' "$LINUX_LAB/data/sparse.bin"
 du -B1 "$LINUX_LAB/data/sparse.bin"
 du --apparent-size -B1 "$LINUX_LAB/data/sparse.bin"
 ```
 
-The logical size is `1048576` bytes. Allocated usage is usually smaller because
-the hole reads as zeros without allocating every data block. Exact allocation
-depends on the filesystem. Hard links, compression and copy-on-write sharing
-also complicate adding directory totals from separate scans.
+`truncate -s` sets the logical length; holes read back as zeroes without requiring every block to be allocated. `stat` reports logical size and allocated block count/unit. `du` normally reports allocated blocks; `--apparent-size` reports logical length. Filesystem behavior varies, so exact savings differ. This lab only creates or resizes a known file under `$LINUX_LAB`; do not copy the command to a real data path.
 
-## Inspect a deleted file that remains open
+## A deleted name can still consume space
 
-This block creates and removes only its own small lab file. An open descriptor
-keeps it readable until closed; do not apply this removal to a service log.
+Unlinking a file removes its directory entry, but storage remains allocated while a process holds it open. This isolated example creates and removes only a small file under the private fixture:
 
 ```bash
 (
-    printf 'still open\n' > "$LINUX_LAB/data/open-demo.txt"
+    printf 'still readable\n' > "$LINUX_LAB/data/open-demo.txt"
     exec 3< "$LINUX_LAB/data/open-demo.txt"
     rm -- "$LINUX_LAB/data/open-demo.txt"
     readlink "/proc/$BASHPID/fd/3"
@@ -61,38 +51,14 @@ keeps it readable until closed; do not apply this removal to a service log.
 )
 ```
 
-`cat` still prints `still open`, and the descriptor target normally ends in
-`(deleted)`. `$BASHPID` identifies this Bash subshell; `$$` can still identify
-its parent. On a real investigation, `lsof +L1` can
-identify deleted-open files if installed and permitted. Do not truncate unknown
-descriptors or restart a database just to recover space.
+The link target normally ends in `(deleted)` and `cat` still prints `still readable`. Closing the final descriptor releases storage when no other links remain. `$BASHPID` identifies this Bash subshell; `$$` can still identify its parent. On a host, `lsof +L1` can list deleted-open files when installed and permitted. Identify the owning process and follow its supported log-reopen or restart procedure; do not truncate an unknown descriptor or restart a database casually. Permissions can hide results.
 
-## Know where inspection ends
+## Keep storage changes out of blind command recipes
 
-A disk, a partition, an LVM logical volume and a filesystem are different layers.
-`lsblk`, `findmnt`, and approved LVM queries help map them. Growing one layer does
-not automatically grow the others. This guide does not give a generic `mkfs`,
-partition deletion or live resize command: the correct operation depends on the
-actual device, filesystem, backups and recovery plan.
+`mkfs`, partition-table edits, mounting, filesystem growth, and LVM changes affect persistent data. The correct order and command depend on device identity, filesystem, backups, and recovery plan. Never copy a device name from an example into a real system. `findmnt`, `lsblk`, and read-only volume queries help establish the layout; they do not authorize a destructive change.
 
 ## Practice
 
-Find the filesystem containing the practice logs, then compare the sparse file's
-allocated and apparent sizes. Explain which number answers “disk space used.”
+Compare `df -h` and `df -i` for your home directory. Create the sparse lab file above and explain why its apparent length can exceed its allocated blocks. Remove only the lab file and directory you created.
 
-<details>
-<summary>One answer</summary>
-
-```bash
-findmnt -T "$LINUX_LAB/logs"
-du -B1 "$LINUX_LAB/data/sparse.bin"
-du --apparent-size -B1 "$LINUX_LAB/data/sparse.bin"
-```
-
-</details>
-
-[Manual: du](https://man7.org/linux/man-pages/man1/du.1.html)
-· [df](https://man7.org/linux/man-pages/man1/df.1.html)
-· [unlink and open files](https://man7.org/linux/man-pages/man2/unlink.2.html)
-· [Disk-space checklist](../troubleshooting/disk-space.md)
-· [Previous](06-memory-and-cpu.md) · [Index](README.md) · [Next](08-boot-services-and-logs.md)
+[df manual](https://man7.org/linux/man-pages/man1/df.1.html) · [du manual](https://man7.org/linux/man-pages/man1/du.1.html) · [unlink system call](https://man7.org/linux/man-pages/man2/unlink.2.html) · [Disk-space checklist](../troubleshooting/disk-space.md) · [Previous](06-memory-and-cpu.md) · [Index](README.md) · [Next](08-boot-services-and-logs.md)

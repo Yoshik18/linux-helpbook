@@ -34,74 +34,49 @@ class Examples(unittest.TestCase):
         result = self.bash(f'source {setup} >/dev/null && printf "%s" "$LINUX_LAB"')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.env['LINUX_LAB'] = result.stdout
+        self.initial_tmp_entries = set(Path(self.temp.name).iterdir())
 
-    def bash(self, code):
-        return subprocess.run(['bash', '--noprofile', '--norc', '-c', code],
-                              cwd=self.temp.name, env=self.env, text=True,
+    def bash(self, code, *args):
+        command = ['bash', '--noprofile', '--norc', '-c', code]
+        if args:
+            command.extend(['--', *args])
+        return subprocess.run(command, cwd=self.temp.name, env=self.env, text=True,
                               capture_output=True, timeout=15)
 
-    def test_exit_trap_preserves_failure(self):
-        code = block_after(GUIDE, '### Trap for Cleanup')
-        before = set(Path(self.temp.name).iterdir())
+    def test_complete_line_count_script(self):
+        code = block_after(GUIDE, '## Small complete example')
+        script = Path(self.temp.name) / 'line-count.sh'
+        script.write_text(code)
+        sample = Path(self.temp.name) / 'sample.txt'
+        sample.write_text('one\ntwo\nthree\n')
+        result = subprocess.run(['bash', str(script), str(sample)], cwd=self.temp.name,
+                                env=self.env, text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f'{sample}: 3 lines', result.stdout)
+
+    def test_forward_arguments_with_spaces(self):
+        code = block_after(GUIDE, '## Arguments are already separate values')
+        result = self.bash(code + '\n' + "printf 'count=%s\\n' \"$#\"", 'two words')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Path argument: <two words>', result.stdout)
+        self.assertIn('count=1', result.stdout)
+
+    def test_cleanup_preserves_exit_status(self):
+        code = block_after(GUIDE, '## Temporary files and cleanup')
         result = self.bash(code + '\nexit 7\n')
         self.assertEqual(result.returncode, 7, result.stderr)
-        self.assertEqual(set(Path(self.temp.name).iterdir()), before)
-
-    def test_counter_with_errexit(self):
-        code = block_after(GUIDE, '### Loops')
-        result = self.bash('set -e\n' + code)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('Counter: 9', result.stdout)
-
-    def test_local_scope(self):
-        code = block_after(GUIDE, '### Variable Declaration')
-        result = self.bash(code + '\nstatus=outside; show_status; printf "%s\\n" "$status"')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, 'inside\noutside\n')
-
-    def test_retry_keeps_arguments(self):
-        code = block_after(GUIDE, '### Retry Mechanism')
-        result = self.bash(code + '\nshow() { printf "%s:<%s>\\n" "$#" "$1"; }; retry 1 show "two words"')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, '1:<two words>\n')
-
-    def test_retry_failure_and_invalid_input(self):
-        code = block_after(GUIDE, '### Retry Mechanism')
-        for suffix, expected in [('retry 1 false', 1), ('retry 0 true', 2),
-                                 ('retry', 2)]:
-            with self.subTest(suffix=suffix):
-                result = self.bash('set -u\n' + code + '\n' + suffix)
-                self.assertEqual(result.returncode, expected, result.stderr)
-
-    def test_warning_is_logged_and_sent_to_stderr(self):
-        code = block_after(GUIDE, '### Logging Framework')
-        result = self.bash('LOG_FILE=lab.log\n' + code + '\nlog WARN "test message"')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, '')
-        self.assertIn('WARN: test message', result.stderr)
-        self.assertIn('WARN: test message', (Path(self.temp.name) / 'lab.log').read_text())
-
-    def test_configuration_keeps_quotes_and_last_line(self):
-        (Path(self.temp.name) / 'config').write_text(' # comment\n  \n host = localhost\nquoted = "two words"\nlast=value')
-        code = block_after(GUIDE, '### Configuration File Parser')
-        result = self.bash(code + '\nparse_config config; printf "%s|%s|%s\\n" "${config[host]}" "${config[quoted]}" "${config[last]}"')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, 'localhost|"two words"|value\n')
-
-    def test_getopts_missing_argument(self):
-        code = block_after(GUIDE, '### Getopts Example')
-        result = self.bash('set -- -f\n' + code)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn('needs an argument', result.stderr)
+        self.assertEqual(set(Path(self.temp.name).iterdir()), self.initial_tmp_entries)
 
     def test_directory_permissions_lab(self):
         if os.geteuid() == 0:
             self.skipTest('root can bypass directory mode checks')
         text = (ROOT / 'fundamentals/permissions.md').read_text()
-        result = self.bash(block_after(text, '## Try it in a private lab'))
+        result = self.bash(block_after(text, '## Change one practice file'))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('Permission denied', result.stderr)
-        self.assertEqual(result.stdout.count('hello'), 2)
+        self.assertIn('600', result.stdout)
+        self.assertIn('744', result.stdout)
+        lab_script = Path(self.env['LINUX_LAB']) / 'bin/hello.sh'
+        self.assertEqual(lab_script.stat().st_mode & 0o777, 0o744)
 
     def test_disk_space_lab(self):
         text = (ROOT / 'troubleshooting/disk-space.md').read_text()
@@ -114,14 +89,14 @@ class Examples(unittest.TestCase):
 
     def test_practice_pipeline_exit_statuses(self):
         text = (ROOT / 'fundamentals/13-practice-labs.md').read_text()
-        result = self.bash(block_after(text, '## 1.'))
+        result = self.bash(block_after(text, '## Lab 1:'))
         self.assertEqual(result.returncode, 0, result.stderr)
         for expected in ['without pipefail: 0', 'with pipefail: 2']:
             self.assertIn(expected, result.stdout)
 
     def test_file_copy_and_rename(self):
         text = (ROOT / 'fundamentals/02-filesystem-and-paths.md').read_text()
-        result = self.bash(block_after(text, '## Create, copy and rename'))
+        result = self.bash(block_after(text, '## Create, copy, move, remove'))
         self.assertEqual(result.returncode, 0, result.stderr)
         lab = Path(self.env['LINUX_LAB'])
         self.assertEqual((lab / 'work/reports/tasks.txt').read_text(),
@@ -130,7 +105,7 @@ class Examples(unittest.TestCase):
 
     def test_link_identity(self):
         text = (ROOT / 'fundamentals/02-filesystem-and-paths.md').read_text()
-        result = self.bash('mkdir "$LINUX_LAB/work"\n' + block_after(text, '## Inspect links'))
+        result = self.bash('mkdir "$LINUX_LAB/work"\n' + block_after(text, '## Links name data in different ways'))
         self.assertEqual(result.returncode, 0, result.stderr)
         lab = Path(self.env['LINUX_LAB'])
         self.assertEqual((lab / 'notes/todo.txt').stat().st_ino,
@@ -140,7 +115,7 @@ class Examples(unittest.TestCase):
 
     def test_archive_round_trip(self):
         text = (ROOT / 'fundamentals/02-filesystem-and-paths.md').read_text()
-        result = self.bash(block_after(text, '## Create and inspect a backup archive'))
+        result = self.bash(block_after(text, '## Archive a directory and compare a restore'))
         self.assertEqual(result.returncode, 0, result.stderr)
         lab = Path(self.env['LINUX_LAB'])
         self.assertEqual((lab / 'restored/notes/file with spaces.txt').read_text(),
@@ -148,7 +123,7 @@ class Examples(unittest.TestCase):
 
     def test_fixture_error_counts(self):
         text = (ROOT / 'fundamentals/03-shell-and-text.md').read_text()
-        result = self.bash(block_after(text, '## Count repeated errors'))
+        result = self.bash(block_after(text, '## Search and count repeated lines'))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertRegex(result.stdout, r'2 ERROR api timeout')
         self.assertRegex(result.stdout, r'1 ERROR db refused')
@@ -163,13 +138,13 @@ class Examples(unittest.TestCase):
 
     def test_lab_script_execute_permission(self):
         text = (ROOT / 'fundamentals/04-users-and-access.md').read_text()
-        result = self.bash(block_after(text, '## Make one lab script executable'))
+        result = self.bash(block_after(text, '## Change only the permission you intend'))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.count('hello from the lab'), 2)
 
     def test_umask_fixture(self):
         text = (ROOT / 'fundamentals/04-users-and-access.md').read_text()
-        result = self.bash(block_after(text, '## Observe umask'))
+        result = self.bash(block_after(text, '## Umask limits new permissions'))
         self.assertEqual(result.returncode, 0, result.stderr)
         lab = Path(self.env['LINUX_LAB'])
         self.assertEqual((lab / 'notes/new-private.txt').stat().st_mode & 0o777, 0o600)
@@ -177,20 +152,20 @@ class Examples(unittest.TestCase):
 
     def test_terminate_only_lab_child(self):
         text = (ROOT / 'fundamentals/05-processes-and-signals.md').read_text()
-        result = self.bash(block_after(text, '## Send SIGTERM'))
+        result = self.bash(block_after(text, '## Signals and safe shutdown'))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('terminated child status: 143', result.stdout)
+        self.assertIn('child status: 143', result.stdout)
 
     def test_sparse_file_fixture(self):
         text = (ROOT / 'fundamentals/07-storage-and-filesystems.md').read_text()
-        result = self.bash(block_after(text, '## See why apparent size'))
+        result = self.bash(block_after(text, '## Logical size differs from allocated space'))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((Path(self.env['LINUX_LAB']) / 'data/sparse.bin').stat().st_size,
                          1024 * 1024)
 
     def test_practice_deleted_open_file(self):
-        text = (ROOT / 'fundamentals/13-practice-labs.md').read_text()
-        result = self.bash(block_after(text, '## 2.'))
+        text = (ROOT / 'fundamentals/07-storage-and-filesystems.md').read_text()
+        result = self.bash(block_after(text, '## A deleted name can still consume space'))
         self.assertEqual(result.returncode, 0, result.stderr)
         for expected in ['still readable', '(deleted)']:
             self.assertIn(expected, result.stdout)
@@ -198,9 +173,10 @@ class Examples(unittest.TestCase):
     def test_practice_http_error_statuses(self):
         if shutil.which('curl') is None:
             self.skipTest('curl is not installed')
-        text = (ROOT / 'fundamentals/13-practice-labs.md').read_text()
-        section = text.split('## 3.', 1)[1]
+        text = (ROOT / 'fundamentals/10-networking.md').read_text()
+        section = text.split('## 4. Test connection and application response separately', 1)[1]
         blocks = re.findall(r'```bash\n(.*?)```', section, re.S)
+        self.assertGreaterEqual(len(blocks), 2, 'expected local server and client command blocks')
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
@@ -225,8 +201,7 @@ class Examples(unittest.TestCase):
             self.assertIn('todo.txt', probe.stdout)
             result = self.bash('set +e\n' + blocks[1].replace('8765', str(port)))
             self.assertEqual(result.returncode, 0, result.stderr)
-            for expected in ['HTTP 404', 'plain curl: 0',
-                             'curl with fail: 22', 'learn files', 'read logs']:
+            for expected in ['HTTP 404', 'learn files', 'read logs']:
                 self.assertIn(expected, result.stdout)
         finally:
             server.terminate()

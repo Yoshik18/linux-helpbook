@@ -1,200 +1,138 @@
-# Vim Cheatsheet
+# Vim: edit a file without getting lost
 
-## Modes
-- **Normal Mode**: Default mode for navigation and commands
-- **Insert Mode**: For typing text (press `i` to enter)
-- **Visual Mode**: For selecting text (press `v` to enter)
-- **Command Mode**: For executing commands (press `:` to enter)
+Vim is a terminal text editor. It has modes: the same key can insert text in
+Insert mode or run an editing command in Normal mode. Press `Esc` to return to
+Normal mode if you are unsure where you are.
 
-## Navigation (Normal Mode)
+Source the fixture from the repository root in the same terminal first:
 
-### Basic Movement
-- `h` - Move left
-- `j` - Move down
-- `k` - Move up
-- `l` - Move right
-- `w` - Move to next word
-- `b` - Move to previous word
-- `e` - Move to end of word
-- `0` - Move to beginning of line
-- `$` - Move to end of line
-- `^` - Move to first non-blank character
-- `gg` - Move to beginning of file
-- `G` - Move to end of file
-- `:n` - Jump to line n
+```bash
+source fundamentals/labs/setup.sh
+printf '%s\n' "$LINUX_LAB"
+```
 
-### Advanced Movement
-- `Ctrl+f` - Page down
-- `Ctrl+b` - Page up
-- `Ctrl+d` - Half page down
-- `Ctrl+u` - Half page up
-- `%` - Jump to matching bracket
-- `{` - Jump to previous empty line
-- `}` - Jump to next empty line
-- `*` - Jump to next occurrence of word under cursor
-- `#` - Jump to previous occurrence of word under cursor
+This creates a private temporary notes directory and exports `LINUX_LAB` for this
+shell. Now open a disposable file, not a system configuration file:
 
-## Entering Insert Mode
-- `i` - Insert before cursor
-- `a` - Insert after cursor
-- `I` - Insert at beginning of line
-- `A` - Insert at end of line
-- `o` - Insert new line below
-- `O` - Insert new line above
-- `s` - Delete character and insert
-- `S` - Delete line and insert
+```bash
+vim "$LINUX_LAB/notes/vim-practice.txt"
+```
 
-## Exiting Insert Mode
-- `Esc` - Return to normal mode
-- `Ctrl+c` - Return to normal mode
+## Make and save a small edit
 
-## Visual Mode
-- `v` - Start visual mode
-- `V` - Start visual line mode
-- `Ctrl+v` - Start visual block mode
-- `Esc` - Exit visual mode
+1. Vim starts in Normal mode. Press `i` to enter Insert mode.
+2. Type `first line` and press `Enter`, then type `second line`.
+3. Press `Esc`. You are back in Normal mode.
+4. Type `:wq` and press `Enter` to write the file and quit.
+5. Check the result from the shell:
 
-## Editing Commands
+```bash
+cat "$LINUX_LAB/notes/vim-practice.txt"
+```
 
-### Delete
-- `x` - Delete character under cursor
-- `X` - Delete character before cursor
-- `dd` - Delete entire line
-- `dw` - Delete word
-- `d$` - Delete to end of line
-- `d0` - Delete to beginning of line
-- `dgg` - Delete to beginning of file
-- `dG` - Delete to end of file
+`cat` prints the saved two lines. Vim commands in this guide assume you have
+pressed `Esc` first unless they explicitly say Insert mode. `:` opens Vim's
+command line, where you type an Ex command and press `Enter`.
 
-### Copy (Yank)
-- `yy` - Copy entire line
-- `yw` - Copy word
-- `y$` - Copy to end of line
-- `y0` - Copy to beginning of line
+## Move around and find text
 
-### Paste
-- `p` - Paste after cursor
-- `P` - Paste before cursor
+| In Normal mode | Action | Detail |
+|---|---|---|
+| `h`, `j`, `k`, `l` | Left, down, up, right | Arrow keys often work too; these keys work without leaving the home row. |
+| `w`, `b` | Next word, previous word | Word boundaries depend on punctuation and Vim's `iskeyword` setting. |
+| `0`, `^`, `$` | Line start, first nonblank, line end | `^` differs from `0` on an indented line. |
+| `gg`, `G` | First line, last line | `:25` then Enter jumps to line 25. |
+| `/pattern` | Search forward | Press Enter, then `n` for next and `N` for previous match. |
+| `?pattern` | Search backward | Press Enter to search; `n` repeats in the same search direction. |
+| `*`, `#` | Search word under cursor | Forward and backward respectively. |
 
-### Change
-- `cw` - Change word
-- `cc` - Change entire line
-- `c$` - Change to end of line
-- `c0` - Change to beginning of line
+Use `/timeout` then Enter to find a word. Press `Esc` to stop highlighting or
+continue editing. Vim regular expressions are not identical to shell globs.
 
-### Undo/Redo
-- `u` - Undo
-- `Ctrl+r` - Redo
+## Change text
 
-## Search and Replace
+These are Normal-mode commands. Start on the disposable practice file:
 
-### Search
-- `/pattern` - Search forward for pattern
-- `?pattern` - Search backward for pattern
-- `n` - Next search result
-- `N` - Previous search result
-- `*` - Search for word under cursor
-- `#` - Search backward for word under cursor
+| Command | Effect | How to read it |
+|---|---|---|
+| `i` | Insert before cursor | Press `Esc` when done typing. |
+| `a` | Insert after cursor | Useful when the cursor is on the last character. |
+| `o` | Open a line below and insert | `O` opens one above. |
+| `x` | Delete character under cursor | Changes the buffer immediately; `u` undoes. |
+| `dd` | Delete current line | `p` puts the deleted text after the cursor. |
+| `yy` | Copy (yank) current line | `p` puts the copied line below. |
+| `u` / `Ctrl+r` | Undo / redo | Undo applies to the current buffer's change history. |
+| `dw` | Delete from cursor to next word boundary | Vim combines an operator (`d`) with a motion (`w`). |
+| `ciw` | Change the word under cursor | Deletes that word and enters Insert mode. |
+| `dd` then `p` | Move a line down | Delete and put are operations, not shell commands. |
 
-### Replace
-- `:s/old/new` - Replace first occurrence on current line
-- `:s/old/new/g` - Replace all occurrences on current line
-- `:%s/old/new/g` - Replace all occurrences in file
-- `:%s/old/new/gc` - Replace all with confirmation
+For example, `d$` means delete from the cursor (`d`) to the end of the line (`$`).
+This operator-plus-motion pattern is reusable: `y$` copies to line end, while
+`c$` changes text to line end and enters Insert mode. If you make a mistake,
+press `Esc` and `u` before saving.
 
-## File Operations
+## Replace carefully
 
-### Save and Quit
-- `:w` - Save file
-- `:q` - Quit (if no changes)
-- `:wq` - Save and quit
-- `:x` - Save and quit
-- `ZZ` - Save and quit
-- `:q!` - Quit without saving
-- `ZQ` - Quit without saving
+From Normal mode, `:%s/old/new/gc` searches the whole file (`%`), substitutes
+`new` for `old` (`s`), applies to every match on each line (`g`) and asks before
+each change (`c`). Review prompts before accepting. Without `c`, the edit happens
+without confirmation; inspect with `u` to undo before writing.
 
-### File Navigation
-- `:e filename` - Edit file
-- `:sp filename` - Split window and edit file
-- `:vsp filename` - Vertical split and edit file
-- `:bn` - Next buffer
-- `:bp` - Previous buffer
-- `:bd` - Delete buffer
+- `:s/old/new/` changes the first match on the current line.
+- `:s/old/new/g` changes every match on the current line.
+- `:%s/old/new/g` changes matches throughout the buffer.
+- `:%s/old/new/gc` asks before each replacement throughout the buffer.
 
-## Window Management
-- `Ctrl+w h` - Move to left window
-- `Ctrl+w j` - Move to window below
-- `Ctrl+w k` - Move to window above
-- `Ctrl+w l` - Move to right window
-- `Ctrl+w s` - Split window horizontally
-- `Ctrl+w v` - Split window vertically
-- `Ctrl+w c` - Close window
-- `Ctrl+w o` - Close other windows
+The slash separates pattern and replacement. Escape a literal slash or choose a
+different delimiter, for example `:%s#old/path#new/path#g`.
 
-## Marks and Registers
-- `ma` - Set mark 'a'
-- `'a` - Jump to mark 'a'
-- `"ayy` - Copy line to register 'a'
-- `"ap` - Paste from register 'a'
-- `:reg` - Show registers
+## Save, quit and recover
 
-## Macros
-- `qa` - Start recording macro 'a'
-- `q` - Stop recording
-- `@a` - Execute macro 'a'
-- `@@` - Execute last macro
+| Command | Result |
+|---|---|
+| `:w` | Write changes to the current file. |
+| `:q` | Quit if there are no unsaved changes. |
+| `:wq` | Write, then quit. |
+| `:q!` | Discard unsaved buffer changes and quit. Use only when you mean to lose them. |
+| `:x` | Write and quit if changed; otherwise just quit. |
 
-## Folding
-- `zf` - Create fold
-- `zo` - Open fold
-- `zc` - Close fold
-- `za` - Toggle fold
-- `zR` - Open all folds
-- `zM` - Close all folds
+If `:q` says there are unsaved changes, do not jump straight to `:q!`. Use `:w`
+to save, or inspect/undo the changes first. For a new buffer, `:w filename` sets
+its path and writes it. Vim's swap/recovery behavior can depend on configuration;
+follow its message before removing any recovery file.
 
-## Indentation
-- `>>` - Indent line
-- `<<` - Unindent line
-- `>G` - Indent to end of file
-- `>gg` - Indent to beginning of file
-- `=G` - Auto-indent to end of file
+## Windows and settings
 
-## Text Objects
-- `diw` - Delete inner word
-- `daw` - Delete a word (including space)
-- `di"` - Delete inside quotes
-- `da"` - Delete around quotes
-- `dip` - Delete inside paragraph
-- `dap` - Delete around paragraph
+Vim can show multiple buffers in windows. `:split filename` opens a horizontal
+split, `:vsplit filename` a vertical split. Press `Ctrl+w` then `h`, `j`, `k` or
+`l` to move between windows; `:close` closes the current window, not necessarily
+the whole Vim process.
 
-## Command Line
-- `:help` - Open help
-- `:set number` - Show line numbers
-- `:set nonumber` - Hide line numbers
-- `:set wrap` - Enable line wrapping
-- `:set nowrap` - Disable line wrapping
-- `:set ignorecase` - Ignore case in search
-- `:set smartcase` - Smart case matching
-- `:syntax on` - Enable syntax highlighting
-- `:syntax off` - Disable syntax highlighting
+Useful temporary display settings:
 
-## Advanced Commands
-- `gq` - Format text
-- `gw` - Format text and return to original position
-- `J` - Join lines
-- `gJ` - Join lines without spaces
-- `Ctrl+a` - Increment number
-- `Ctrl+x` - Decrement number
-- `~` - Toggle case
-- `guu` - Convert line to lowercase
-- `gUU` - Convert line to uppercase
-- `g~~` - Toggle case of line
+```vim
+:set number
+:set nonumber
+:set wrap
+:set nowrap
+```
 
-## Tips
-- Use `:help` to get help on any command
-- Press `Esc` to return to normal mode
-- Use `Ctrl+g` to show file information
-- Use `Ctrl+l` to redraw screen
-- Use `:set paste` before pasting to preserve formatting
-- Use `:set nopaste` after pasting
-- Start with moving, searching, saving and quitting. Use the rest as a lookup reference.
+These affect the current session; whether settings persist depends on your Vim
+configuration. `:help motion`, `:help :s` and `:help write` open Vim's built-in
+help. Press `q` from a help window to close it.
+
+## Keep this short list handy
+
+- `Esc`: return to Normal mode.
+- `i`: insert before cursor.
+- `/word`: search forward.
+- `u`: undo.
+- `:w`: save.
+- `:q`: quit when clean.
+- `:q!`: quit and discard unsaved edits.
+
+Vim and Neovim share many basic commands, but plugins, defaults and configuration
+can differ. Learn a few motions and save/quit safely before exploring macros,
+registers or complex text objects.
+
+[Back to the Linux Helpbook](../README.md)

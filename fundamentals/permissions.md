@@ -1,79 +1,134 @@
-# File permissions without breaking directory access
+# File permissions: understand the path before changing access
 
-A file's permissions control access to its contents. A directory's permissions
-control access to its entries. The same numeric mode can mean very different
-things depending on which one you change.
+Linux checks access using the process's user and group credentials, the file type,
+permission bits and other security controls. Read-only commands can narrow down
+a problem. Do not use `chmod 777` or recursive permission changes as a shortcut.
 
-## Read the mode
-
-```bash
-ls -ld .
-stat -c '%A %a %U:%G %n' .
-```
-
-`stat -c` is GNU syntax. The first character in `ls -l` identifies the type:
-`d` is a directory, `-` a regular file. The next three groups describe the owner,
-group and everyone else. Each group can have read (`r`), write (`w`) and execute
-or search (`x`) permission.
-
-For a regular file, `x` allows execution, subject to the interpreter, mount
-options and other controls. For a directory:
-
-- `r` allows listing the names of entries.
-- `x` allows searching/traversing the directory to access a named entry.
-- `w`, normally together with `x`, allows creating and removing entries.
-
-Deleting a file generally depends on permissions on its parent directory, not
-whether the file itself is writable. Sticky-bit directories add restrictions.
-ACLs, SELinux/AppArmor policies, capabilities and read-only mounts can also affect
-access. Basic mode bits do not explain every `Permission denied` error.
-
-## Try it in a private lab
-
-Run this as your ordinary user, not root. The lab creates one temporary directory
-and changes only a child inside it. It does not change your home permissions.
+## Read a mode as owner, group and others
 
 ```bash
-lab=$(mktemp -d) || exit 1
-mkdir "$lab/notes"
-printf 'hello\n' > "$lab/notes/example.txt"
-chmod 700 "$lab/notes"
-chmod 600 "$lab/notes/example.txt"
-cat "$lab/notes/example.txt"
-
-# Remove search permission from the directory, not the file.
-chmod 600 "$lab/notes"
-cat "$lab/notes/example.txt" # Expected: Permission denied for an ordinary user.
-
-# Restore access before trying anything else.
-chmod 700 "$lab/notes"
-cat "$lab/notes/example.txt"
-printf 'Lab directory: %s\n' "$lab"
+id
+stat -c '%A %a %U:%G %n' "$LINUX_LAB/config/private.txt"
 ```
 
-A privileged process may bypass the expected failure. Stop and check `id` if your
-results differ. Keep the small lab directory for inspection, then remove only
-that directory when you are finished.
+`id` prints the current process's user ID, group ID and supplementary groups.
+The GNU `stat -c` format prints symbolic mode (`%A`), octal mode (`%a`),
+ownership and the path. In a mode such as `-rw-r-----`, the first `-` means a
+regular file; the next three characters apply to the owner, group and others.
+`r` reads file contents, `w` writes them, `x` executes a file when the interpreter
+and mount policy allow it.
 
-## What can go wrong?
+In octal, read is 4, write is 2 and execute is 1. Add them for each class:
 
-`chmod -R 644 directory/` applies a regular-file-style mode to directories too.
-Their missing `x` bit can make files unreachable even when those files are
-readable. Do not repair this by giving everything `777`.
+| Mode | Owner | Group | Others | Common use, not a universal rule |
+|---|---|---|---|---|
+| `600` | read/write | none | none | Private regular file |
+| `640` | read/write | read | none | File shared with a trusted group |
+| `644` | read/write | read | read | Non-secret data file |
+| `700` | read/write/execute | none | none | Private directory or owner-only script |
+| `755` | read/write/execute | read/execute | read/execute | Publicly traversable directory or executable |
 
-Check the user, groups, parent directory modes and the failing operation first.
-If installed, `namei -l /path/to/file` helps inspect the whole path. Choose access
-based on who actually needs it. Private configuration is not the same as a
-public website's static assets, and executable scripts are not plain text data.
+The correct mode depends on purpose, parent directories, ACLs and policy. A file
+may still be unreadable when its mode appears open if a parent directory denies
+traversal, an ACL narrows access, a security module denies it, or a mount is
+read-only/noexec.
 
-## Interview takeaway
+## Directory permissions are different
 
-- Why can you list filenames in a directory but fail to open those files?
-- Why might a user delete a read-only file from a writable directory?
+For a directory:
 
-## Further reading
+- `r` lets a process list names.
+- `x` lets it search the directory and reach an entry whose name it already knows.
+- `w` permits adding/removing names when paired with `x`, subject to ownership and sticky-bit rules.
 
-- [`chmod(1)`](https://man7.org/linux/man-pages/man1/chmod.1.html)
-- [`path_resolution(7)`](https://man7.org/linux/man-pages/man7/path_resolution.7.html)
+A file's write bit is not the main control for deleting its name. Deletion usually
+depends on the parent directory. To open `/a/b/file`, the process needs search
+permission on each directory in the path and the required permission on the file.
 
-[Back to the learning path](../README.md)
+```bash
+ls -ld / /var /var/log
+namei -l /var/log/syslog
+```
+
+`ls -ld` displays each named directory itself. `namei -l` (util-linux) follows
+the path one component at a time and prints ownership/modes, helping find where
+traversal fails. Filesystem paths and protected names vary by host; don't assume
+`/var/log/syslog` exists.
+
+## Change one practice file
+
+The setup creates a private temporary directory and a dummy file. Source it from
+the repository root as your ordinary user, then inspect and change only that file:
+
+```bash
+source fundamentals/labs/setup.sh
+stat -c '%A %a %n' "$LINUX_LAB/config/private.txt"
+chmod u+x "$LINUX_LAB/bin/hello.sh"
+stat -c '%A %a %n' "$LINUX_LAB/bin/hello.sh"
+```
+
+`chmod u+x` adds execute for the file owner (`u`) without replacing other bits.
+`chmod 750 file` instead assigns owner `rwx`, group `r-x`, others none. Prefer
+the symbolic form when you want to add or remove one permission while preserving
+the rest. `chmod` changes mode bits; it does not change ownership or parent access.
+
+To demonstrate how a directory's search bit matters, this block creates a fresh
+subdirectory within the lab. Run the whole block as your ordinary user; the final
+`chmod` restores access. If you stop after the expected failure, run that final
+`chmod` line manually before continuing:
+
+```bash
+mkdir -p "$LINUX_LAB/access-demo/notes"
+printf 'practice only\n' > "$LINUX_LAB/access-demo/notes/readme.txt"
+chmod 700 "$LINUX_LAB/access-demo/notes"
+chmod 600 "$LINUX_LAB/access-demo/notes/readme.txt"
+cat "$LINUX_LAB/access-demo/notes/readme.txt"
+chmod 600 "$LINUX_LAB/access-demo/notes"
+cat "$LINUX_LAB/access-demo/notes/readme.txt"  # Expected to fail as an ordinary user.
+chmod 700 "$LINUX_LAB/access-demo/notes"
+cat "$LINUX_LAB/access-demo/notes/readme.txt"
+```
+
+The second `cat` cannot traverse the directory; the file remains mode `600`.
+The final `chmod` restores the directory so the lab is usable. A privileged
+process may get a different result. Do not reproduce this on a real service path.
+
+## Understand umask and access databases
+
+New files receive requested creation permissions with bits removed by the
+process's umask. For example, programs commonly request `666` for regular files
+and `777` for directories, then the umask removes bits. A umask of `022` often
+leads to file mode `644` and directory mode `755`; a umask of `077` commonly
+leads to `600` and `700`. Existing files do not change when umask changes.
+Default ACLs and applications can alter the simple result.
+
+```bash
+umask
+(
+    umask 077
+    : > "$LINUX_LAB/notes/umask-example.txt"
+    mkdir -p "$LINUX_LAB/umask-dir"
+    stat -c '%a %n' "$LINUX_LAB/notes/umask-example.txt" "$LINUX_LAB/umask-dir"
+)
+```
+
+Parentheses run a subshell so the temporary umask does not change the calling
+shell. `getent passwd "$USER"` and `getent group` query the configured account
+sources, which may include network directories as well as local files. A newly
+added group is not necessarily active in processes that were already running.
+
+If ACL utilities are installed, `getfacl file` displays additional access entries
+and their mask. SELinux/AppArmor denials and read-only mounts require their own
+evidence. Do not disable security policy to make a permissions example pass.
+
+## Safe troubleshooting order
+
+1. Identify the user and groups of the process that failed, not only your login.
+2. Check the target and each parent directory with `stat`/`namei`.
+3. Inspect ACLs and relevant policy only if mode bits do not explain the result.
+4. Make the narrowest approved change to a lab or intended path.
+5. Recheck the exact file and parent modes, then test as the intended user.
+
+See [users and access](04-users-and-access.md) and the [manual for `chmod`](https://man7.org/linux/man-pages/man1/chmod.1.html).
+
+[Back to the Linux learning path](../README.md)

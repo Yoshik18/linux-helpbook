@@ -1,9 +1,8 @@
-# 1. Get comfortable in the terminal
+# 1. Understand the Linux system and your command line
 
-Start with the commands you use to identify a machine, find your way around and
-get help. Examples use Bash on Linux. You do not need root.
+Linux is the kernel: it schedules processes, manages memory and devices, and enforces access controls. A distribution combines that kernel with user-space programs, libraries, package tools, defaults, and release metadata. The shell is one user-space program; it reads commands and starts other programs. This distinction helps explain why a container may identify as Debian but use its host's kernel.
 
-## Find out which machine and shell you are using
+## Identify the environment
 
 ```bash
 uname -sr
@@ -11,15 +10,26 @@ uname -m
 cat /etc/os-release
 whoami
 id
-printf 'Bash version: %s\n' "$BASH_VERSION"
+printf 'shell=%s version=%s\n' "$SHELL" "$BASH_VERSION"
 ```
 
-`uname -s` prints the kernel name, `-r` its release and `-m` the architecture.
-`os-release` identifies the distribution's userspace. A container can report
-Debian there while sharing its host's kernel. `id` also shows numeric IDs and
-groups. Values differ by machine; compare fields, not a sample version number.
+`uname -s` is the kernel name, `-r` its release; `-m` reports machine architecture. `/etc/os-release` describes the installed distribution's user space, not necessarily the host kernel. `cat` writes that text to standard output. `whoami` prints the effective username; `id` shows effective numeric/user identity and groups. `$SHELL` is often the configured login shell, while `$BASH_VERSION` is set only in Bash—an empty value can mean this is another shell. Output varies by machine; do not treat versions as expected answers.
 
-## Find your current directory
+## A command's lifecycle
+
+At a prompt, the shell parses words and operators, expands variables and patterns, then runs a builtin/function or searches `PATH` for an executable. It supplies arguments and environment to the process, waits when appropriate, and records an exit status. `cd` must be a shell builtin because a child process cannot change its parent's current directory.
+
+```bash
+type cd
+type ls
+command -v bash
+command -v not-a-real-command
+printf 'status=%s\n' "$?"
+```
+
+`type` reports how this shell resolves a name (builtin, alias, function, or executable). `command -v` prints the resolved command path/name when found; the deliberately absent name prints nothing and returns nonzero. `$?` is the previous command's status; zero conventionally means success. Save it immediately because the next command replaces it. A missing command is not evidence of a broken subsystem.
+
+## Navigate and inspect
 
 ```bash
 pwd
@@ -28,43 +38,26 @@ ls -lah
 cd /etc
 pwd
 cd -
+pwd
 ```
 
-`pwd` prints the current directory. `ls -l` adds modes, ownership, size and time;
-`-a` includes dotfiles and `-h` makes sizes readable. `cd -` returns to the
-previous directory. `cd` with no argument takes you home. An absolute path starts
-with `/`; a relative path starts from your current directory.
+`pwd` prints the working directory. `ls -l` shows a detailed listing, `-a` includes dot-names, and `-h` makes sizes human-readable (with `-l`). `cd /etc` changes this shell's directory; an absolute path begins at `/`. `cd -` returns to the previous directory and prints it. `cd` without an operand goes to your home directory. A relative path is interpreted from the current directory.
 
-## Find a command before installing anything
-
-```bash
-type cd
-type ls
-command -v bash
-command -v ss
-```
-
-In Bash, `cd` is a builtin: changing directory must affect the shell itself.
-External commands are generally found through `PATH`. `type` can identify
-functions and aliases too. `command -v ss` printing nothing and returning nonzero
-means it was not found, not that your network is broken.
-
-## Ask the right help system
+## Get help at the right layer
 
 ```bash
 help cd
 help printf
 ls --help
+man 1 ls
+man 5 passwd
 ```
 
-For external commands, use `man ls` if manual pages are installed. In the usual
-`less` pager, `/pattern` searches, `n` repeats the search and `q` exits. `man 5
-passwd` describes the file format; `man 1 passwd` describes the command. Minimal
-containers may not include `man` or its database.
+Bash `help` covers builtins; many external programs implement `--help`. `man 1 ls` is the user-command manual section; `man 5 passwd` describes a file format, not the `passwd` program. In the common `less` viewer, `/word` searches, `n` advances to another match, and `q` exits. Minimal systems may omit manuals or a pager.
 
-## Create the practice files
+## Prepare the shared practice files
 
-From this repository's root, source the small, reviewable setup script:
+From the repository root:
 
 ```bash
 source fundamentals/labs/setup.sh
@@ -72,18 +65,9 @@ printf '%s\n' "$LINUX_LAB"
 ls -la "$LINUX_LAB"
 ```
 
-It creates a private temporary directory containing fictional logs, configuration
-and notes. It does not install anything or touch existing application files.
-Later chapters use `$LINUX_LAB`; run setup again in a new terminal if necessary.
-Each run creates a new directory. It honors `TMPDIR` when set.
+`source` runs the setup in this shell so its exported `LINUX_LAB` variable remains available. The script creates a new private temporary fixture directory; it does not install software or modify application files. Each run creates a different directory and honors `TMPDIR`. Run it again in a new terminal before later chapter examples.
 
-## Practice
-
-Find whether `printf` is a builtin, locate the external `bash` executable and
-list hidden practice files without changing directories.
-
-<details>
-<summary>One answer</summary>
+**Try it:** Determine whether `printf` is a builtin, locate Bash, and list hidden fixture entries. The hidden `.practice` name is omitted unless `ls` receives `-a`.
 
 ```bash
 type printf
@@ -91,10 +75,4 @@ command -v bash
 ls -la "$LINUX_LAB"
 ```
 
-The hidden fixture is `.practice`. `ls` without `-a` omits it.
-
-</details>
-
-[Manual: Bash commands and builtins](https://man7.org/linux/man-pages/man1/bash.1.html)
-· [uname](https://man7.org/linux/man-pages/man1/uname.1.html)
-· [Guide index](README.md) · [Next: files and paths](02-filesystem-and-paths.md)
+[Manual: Bash](https://man7.org/linux/man-pages/man1/bash.1.html) · [uname](https://man7.org/linux/man-pages/man1/uname.1.html) · [Guide index](README.md) · [Next: filesystem and paths](02-filesystem-and-paths.md)

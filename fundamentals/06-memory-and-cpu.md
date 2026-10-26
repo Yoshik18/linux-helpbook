@@ -1,67 +1,46 @@
-# 6. Check CPU, memory and resource pressure
+# 6. Read CPU and memory pressure
 
-These commands inspect existing activity. Do not create a CPU or memory stress
-workload on a shared host just to make the output more interesting.
+Begin with observation, then compare samples. Do not create a stress workload on a shared host just to produce dramatic numbers.
 
-## Get a first view
+## Load is not CPU percentage
 
 ```bash
 uptime
-free -h
 ps -eo pid,comm,pcpu,rss --sort=-pcpu
-ps -eo pid,comm,pcpu,rss --sort=-rss
 ```
 
-`uptime` includes load averages, not CPU percentages. On Linux load includes
-runnable work and tasks in uninterruptible sleep. `free` distinguishes free,
-used and available memory. Low free memory alone can simply reflect useful
-caches. Compare available memory, workload behavior and repeated observations.
+`uptime` reports load averages: Linux counts runnable work and tasks in uninterruptible sleep, averaged over 1, 5, and 15 minutes. Load is not a percentage, and its meaning depends on available CPU capacity. A high value can reflect CPU contention, blocked I/O, or both. `ps` shows a process-oriented CPU figure; its time window and normalization differ from an instantaneous host-wide measure. Use repeated samples and correlate with symptoms.
 
-## Sample instead of trusting one snapshot
+## Memory: free, available, cache, and swap
 
 ```bash
+free -h
 vmstat 1 5
 ```
 
-`1` is the interval in seconds; `5` is the report count. Watch `r` for runnable
-work, `b` for blocked work, `si`/`so` for swap traffic and CPU columns such as
-`us`, `sy`, `id` and `wa`. The first row's rate fields normally summarize time
-since boot; later rows describe intervals. Memory/process counts are snapshots.
-High `wa` does not identify which application or device caused a delay.
+`free -h` prints human-readable totals. Linux uses otherwise idle RAM for caches; “free” alone is therefore not a useful health verdict. `available` estimates memory usable for new work without swapping, but it is an estimate. `vmstat 1 5` samples every second for five reports. Its first rate row commonly reflects averages since boot; later rows describe intervals. `r` is runnable work, `b` blocked tasks, `si`/`so` swap-in/swap-out rates, and `us`, `sy`, `id`, `wa` summarize CPU time in user, kernel, idle, and I/O-wait categories. Swap usage is not equivalent to active swap pressure: sustained `si`/`so` is more informative than allocated swap alone. High `wa` does not identify a particular disk or process.
 
-For an interactive view, run `top` and press `q` to exit. In procps top, `P`
-sorts by CPU and `M` by memory. Avoid interpreting every tool's 100% as the same
-thing: per-process normalization, threads and allowed CPUs affect the denominator.
+For an interactive view, run `top`, then press `q` to quit. In procps `top`, `P` sorts by CPU and `M` by memory. CPU percentages can be normalized differently across tools, cores, and threads; check the tool's mode before comparing values.
 
-## Inspect one process, not the entire environment
+## Per-process memory is not additive
 
 ```bash
-ps -p "$$" -o pid,comm,vsz,rss,pcpu
+ps -p "$$" -o pid,comm,vsz,rss
 awk '/^(VmSize|VmRSS|Threads):/ {print}' "/proc/$$/status"
 ```
 
-VSZ is the virtual address-space size; RSS counts resident pages. They need not
-grow together. Shared pages can be counted in multiple processes' RSS, so adding
-all RSS values overcounts some memory. A high value is not itself evidence of a
-leak; compare the same workload over time.
+`VSZ`/`VmSize` is virtual address space; `RSS`/`VmRSS` is resident physical memory. They measure different things. RSS may count shared pages in multiple processes, so summing RSS can overstate physical use. `Threads` reports the process thread count. A single high reading does not prove a leak; compare the same workload over time and consider workload size.
 
-## Check whether a container's budget differs from the host
+## Container limits and cgroups
 
 ```bash
 cat "/proc/$$/cgroup"
 findmnt -t cgroup,cgroup2
 ```
 
-These show membership and mounted hierarchy information. On a correctly resolved
-cgroup v2 directory, useful files include `memory.current`, `memory.max`,
-`memory.events`, `cpu.max` and `cpu.stat`. Do not blindly append a membership path
-to `/sys/fs/cgroup`: namespace and mount roots can change the mapping. Parent
-limits apply too. Cgroup v1 uses different interfaces.
+The first reports cgroup membership; the second lists visible cgroup mounts. A container can hit its own memory or CPU limit while host-level `free` looks normal. With cgroup v2, files such as `memory.current`, `memory.max`, `memory.events`, `cpu.max`, and `cpu.stat` expose usage, limits, events, and throttling. Locate the correct cgroup directory using the actual mount and namespace layout; do not blindly append a membership path to `/sys/fs/cgroup`. Ancestor limits also apply, and cgroup v1 uses different files.
 
-A container can be killed for exceeding its memory limit while host `free`
-looks healthy. `max` at a leaf does not prove ancestors impose no restriction.
-
-## Read pressure counters when available
+## Sample pressure, not just totals
 
 ```bash
 for resource in cpu memory io; do
@@ -73,29 +52,10 @@ for resource in cpu memory io; do
 done
 ```
 
-PSI reports time work is stalled. `avg10`, `avg60` and `avg300` are percentages
-over those windows; `total` is cumulative microseconds. A lifetime total needs
-a difference over time to show current behavior. Missing files can mean unsupported
-or disabled PSI, not zero stalls. System CPU `full` has special semantics; do not
-use it as a universal all-CPU saturation metric.
+Pressure Stall Information (PSI) estimates time work is stalled. `avg10`, `avg60`, and `avg300` are rolling percentages; `total` is cumulative microseconds, so compare two readings to infer recent stalls. Missing files can mean the kernel or configuration does not provide PSI, not that pressure is zero. CPU `full` has special system-level semantics and is not a universal saturation gauge.
 
 ## Practice
 
-Capture three `vmstat` reports, then show RSS and thread count for your shell.
-Write down which numbers are snapshots and which describe an interval.
+Run `vmstat 1 3`, then inspect your shell's RSS and thread count. Label which values are interval rates and which are point-in-time measurements. Avoid changing swap or cgroup settings as a beginner exercise.
 
-<details>
-<summary>One answer</summary>
-
-```bash
-vmstat 1 3
-awk '/^(VmRSS|Threads):/ {print}' "/proc/$$/status"
-```
-
-</details>
-
-[Manual: vmstat](https://man7.org/linux/man-pages/man8/vmstat.8.html)
-· [proc memory fields](https://man7.org/linux/man-pages/man5/proc_meminfo.5.html)
-· [cgroup v2](https://docs.kernel.org/admin-guide/cgroup-v2.html)
-· [PSI](https://docs.kernel.org/accounting/psi.html)
-· [Previous](05-processes-and-signals.md) · [Index](README.md) · [Next](07-storage-and-filesystems.md)
+[vmstat manual](https://man7.org/linux/man-pages/man8/vmstat.8.html) · [proc memory information](https://man7.org/linux/man-pages/man5/proc_meminfo.5.html) · [cgroup v2](https://docs.kernel.org/admin-guide/cgroup-v2.html) · [PSI](https://docs.kernel.org/accounting/psi.html) · [Previous](05-processes-and-signals.md) · [Index](README.md) · [Next](07-storage-and-filesystems.md)

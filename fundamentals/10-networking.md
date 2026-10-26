@@ -1,111 +1,73 @@
-# 10. Debug addresses, DNS, ports and HTTP
+# 10. Debug a network request one layer at a time
 
-Work from the affected client's viewpoint. The commands below do not change
-routes, firewalls or DNS configuration. `ip`/`ss` require iproute2, `dig` DNS tools,
-and `curl` its own package. Missing utilities are not a failed network.
+A request can fail before it reaches an application: name lookup, route selection, transport connection, TLS negotiation, then HTTP handling. Test from the affected client and preserve the exact hostname, port, time and error. Each check below answers one question; none alone proves end-to-end health.
 
-## Check local interfaces and route selection
+The Linux examples use `ip` and `ss` from iproute2. `dig` is commonly supplied by `dnsutils`/`bind-utils`; `curl` may need installing in a disposable lab. Names and packages vary by distribution. Missing tools are not network evidence. Inspection commands do not change configuration. DNS examples can query external infrastructure; use approved names.
 
-```bash
-ip -br address
-ip route
-ip -6 route
-ip route get 127.0.0.1
-```
-
-`-br` is brief output. Addresses show what is configured; routes show forwarding
-choices. `route get` asks the kernel to resolve a route and source address, not
-to send a packet. Policy routing can involve multiple tables. IPv6 may be disabled.
-Do not change a default route while connected through the path you are changing.
-
-## Separate name-service lookup from a DNS query
+## 1. What name does this machine resolve?
 
 ```bash
-getent ahosts localhost
+getent ahosts example.com
 ```
 
-`getent` follows the configured host lookup sources, potentially `/etc/hosts`,
-DNS and resolver services. For a public name you are allowed to query:
+`getent` uses the system's configured name-service path (often `/etc/hosts`, DNS, or a local resolver). Returned addresses prove that this lookup path supplied answers at that moment, not that the application uses the same resolver or can reach those addresses. No result may mean lookup failure, filtering, or no matching record.
+
+To inspect a DNS response directly, if `dig` is installed:
 
 ```bash
 dig example.com A
 dig example.com AAAA
-dig +short example.com A
 ```
 
-Full `dig` output includes the response status, flags, TTLs and answering resolver;
-`+short` hides useful context. These requests may contact an external resolver.
-A DNS answer does not prove the service accepts connections, and applications
-with their own resolver can behave differently from `getent`.
+`A` asks for IPv4 and `AAAA` for IPv6. Read `status`, answer section, TTL, and responding server; `dig +short` is compact but hides those clues. Direct queries may bypass some system lookup behavior. A cached answer can be stale, and a DNS answer does not establish route or service health.
 
-## Find a listening port and its address
+## 2. Which interface and route would Linux use?
+
+```bash
+ip -br address
+ip route
+ip route get 203.0.113.10
+```
+
+`-br` gives a compact interface/address view. `ip route` lists the main IPv4 routing table; `ip -6 route` lists IPv6. `ip route get ADDRESS` asks the kernel to resolve a destination and usually shows selected interface, source address and next hop. It does not send a packet or test the gateway. Policy routing, VPNs and network namespaces can select other paths. Do not modify routes on a remote machine as an experiment.
+
+## 3. Is a local TCP socket listening on the expected address?
 
 ```bash
 ss -lnt
-ss -lntp
-ss -lnt 'sport = :8765'
+ss -lnt 'sport = :8080'
 ```
 
-`-l` selects listeners, `-n` numeric endpoints, `-t` TCP and `-p` process details
-when permitted. A listener on `127.0.0.1` accepts loopback traffic; `0.0.0.0`
-binds all local IPv4 addresses but does not bypass firewalls. IPv6 wildcard
-behavior is configurable. Several connections can share one server port because
-the remote address/port also identifies a TCP connection.
+`-l` shows listening sockets, `-n` keeps numeric addresses/ports, and `-t` selects TCP. The filter narrows the source port. `127.0.0.1:8080` is loopback-only; `0.0.0.0:8080` binds all local IPv4 addresses, subject to firewall and routing. No matching listener is evidence that this network namespace has no visible TCP listener there; permissions, UDP, another namespace or a different port are possible explanations. `ss -p` may show process names when permitted, but also exposes process details.
 
-## Start a service you can safely break
+## 4. Test connection and application response separately
 
-From the repository root in terminal one:
+A safe reproducible lab serves only the fixture notes on loopback. From the repository root, terminal one:
 
 ```bash
 source fundamentals/labs/setup.sh
 python3 -m http.server 8765 --bind 127.0.0.1 --directory "$LINUX_LAB/notes"
 ```
 
-This serves only fictional notes on loopback. Use another unused port if needed.
-Do not serve your home directory. In terminal two:
+This requires Python 3 and an unused port. It is a teaching server, not production software; do not serve a sensitive directory. In terminal two:
 
 ```bash
-curl --fail --max-time 3 http://127.0.0.1:8765/todo.txt
-curl --max-time 3 --output /dev/null --write-out 'HTTP %{http_code}\n' http://127.0.0.1:8765/missing
+curl --connect-timeout 2 --max-time 5 --fail http://127.0.0.1:8765/todo.txt
+curl --connect-timeout 2 --max-time 5 --output /dev/null --write-out 'HTTP %{http_code}\n' http://127.0.0.1:8765/missing
 ```
 
-Expect the three todo lines, then HTTP 404. Plain curl can return zero for an
-HTTP error; `--fail` makes this 404 return status 22. Stop your server with Ctrl+C
-in terminal one. Python's small server is a lab tool, not a production service.
+The first should print fixture text; the second should report 404. `--connect-timeout` bounds connection setup; `--max-time` bounds the whole transfer; `--fail` makes HTTP error responses return a nonzero curl status. Without `--fail`, curl can return success for HTTP 404. A 404 proves an HTTP server answered this request, not that the desired resource exists. Stop only your lab server with Ctrl+C.
 
-## Tell connection, TLS and HTTP failures apart
-
-For an endpoint you are authorized to contact, a verbose curl request shows the
-stages. For example, this contacts a public demonstration domain:
+For an authorized HTTPS endpoint:
 
 ```bash
-curl --verbose --connect-timeout 3 --max-time 10 https://example.com/ -o /dev/null
+curl --verbose --connect-timeout 3 --max-time 10 --output /dev/null https://example.com/
 ```
 
-Look for name resolution, connection, TLS negotiation and the HTTP response.
-Do not use `--insecure` as a certificate repair. A refused connection often means
-no listener or active rejection; a timeout has several possible causes. Ping
-checks ICMP, not whether an HTTP/TCP application works. HTTP/3 uses QUIC/UDP and
-does not follow the HTTPS-over-TCP sequence.
+Verbose output shows progress through resolution, connection, TLS and HTTP; it may expose URLs or headers, so review before sharing. A connection refusal differs from timeout; neither uniquely identifies the cause. Do not use `--insecure` to conceal certificate failures. `ping` tests ICMP, not TCP or HTTP. HTTPS may use HTTP/3/QUIC rather than TCP, so identify the protocol before assuming a TCP-only path.
 
-## Practice
+## Practice: where does the request stop?
 
-With the local server running, identify its listening address and request one
-existing and one missing file. Explain what a 404 proves that a timeout does not.
+With the loopback server running, compare `ss` output, a successful file request and a missing-file request. Then stop the server and repeat the request. For each result, state what it proves and one alternative explanation it leaves open. Extend the investigation with `getent`, `dig`, and `ip route get` for a hostname you are allowed to query; these exercise different layers than the numeric loopback lab.
 
-<details>
-<summary>One answer</summary>
-
-```bash
-ss -lnt 'sport = :8765'
-curl --fail --max-time 3 http://127.0.0.1:8765/todo.txt
-curl --fail --max-time 3 http://127.0.0.1:8765/missing
-```
-
-</details>
-
-[Manual: ss](https://man7.org/linux/man-pages/man8/ss.8.html)
-· [ip route](https://man7.org/linux/man-pages/man8/ip-route.8.html)
-· [curl](https://curl.se/docs/manpage.html)
-· [HTTP/3](https://www.rfc-editor.org/rfc/rfc9114.html)
-· [Previous](09-packages-and-software.md) · [Index](README.md) · [Next](11-isolation-and-security.md)
+[Manual: ss](https://man7.org/linux/man-pages/man8/ss.8.html) · [ip route](https://man7.org/linux/man-pages/man8/ip-route.8.html) · [curl](https://curl.se/docs/manpage.html) · [Previous](09-packages-and-software.md) · [Index](README.md) · [Next](11-isolation-and-security.md)

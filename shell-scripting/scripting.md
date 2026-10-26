@@ -1,767 +1,360 @@
-# Shell Scripting Guide
+# Bash scripting: from command to reliable script
 
-These are Bash examples, not portable POSIX `sh` scripts. `mapfile` and associative
-arrays require Bash 4 or later; the older Bash bundled with some macOS versions
-does not support them. Run `bash --version` before trying those sections.
+A shell script is a text file that Bash reads as commands. Bash parses syntax,
+expands variables and patterns, sets up redirection/pipelines, then runs builtins
+and external programs. Understanding that order explains several common bugs:
+`"$file"` is passed as one argument, while unquoted `$file` may split into many.
+This guide assumes Bash. Arrays and `mapfile` require Bash 4 or later.
 
-Some blocks illustrate one construct and need the variables shown in context.
-They are not one script to concatenate. Use disposable files for writes;
-check syntax with `bash -n script.sh` before running your own script.
+Start with the [Linux learning path](../fundamentals/README.md) if paths, quoting,
+pipes or exit statuses are unfamiliar. Use a disposable directory for file-writing
+examples.
 
-## Basic Script Structure
+## Make a script and run it
 
-### Shebang and Header
 ```bash
-#!/bin/bash
-# Script Name: example.sh
-# Description: Brief description of what the script does
-# Author: Your Name
-# Date: 2024-01-01
-# Version: 1.0
-
-# Exit on an unhandled failure in contexts where errexit applies
-set -e
-
-# Exit on undefined variables
-set -u
+mkdir -p "$HOME/bash-practice"
+cd "$HOME/bash-practice"
+printf '%s\n' '#!/usr/bin/env bash' 'printf "Hello, %s\\n" "$USER"' > hello.sh
+bash -n hello.sh
+bash hello.sh
 ```
 
-`set -e` is not a complete error-handling policy. Tests, AND/OR lists and functions
-called as conditions affect when it applies. Check expected failures explicitly.
-With `set -u`, use `${1:-}` for an optional argument rather than an unset `$1`.
-See the [Bash set builtin](https://www.gnu.org/software/bash/manual/html_node/The-Set-Builtin.html).
+`printf` writes the two lines to `hello.sh`; the first is a *shebang*, telling
+the system which interpreter to use when executing the file directly. `bash -n`
+parses the script without running its commands. `bash hello.sh` explicitly runs
+it with Bash, so execute permission is not needed. This example writes only under
+your home directory; choose another disposable location if preferred.
 
-### Basic Script Template
+To run the script by its path, first make it executable:
+
 ```bash
-#!/bin/bash
-
-# Script configuration
-SCRIPT_NAME=$(basename "$0")
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_FILE="${LOG_FILE:-./script.log}" # Choose a writable path; do not assume root
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-# Logging function
-log() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
-}
-
-# Main function
-main() {
-    log "Starting script execution"
-    # Your script logic here
-    log "Script completed successfully"
-}
-
-# Call main function
-main "$@"
+chmod u+x hello.sh
+./hello.sh
 ```
 
----
+`chmod u+x` adds execute permission for the owner. `./` tells Bash to look in the
+current directory; current directories are normally not in `PATH`. Direct
+execution also needs a valid shebang and a filesystem that permits execution.
 
-## Variables and Data Types
+## Variables and quoting
 
-### Variable Declaration
+Bash variables have no declared string/integer type by default. Assignment has no
+spaces around `=`; expansion uses `$name` or `${name}`.
+
 ```bash
-# Simple variables
-NAME="John"
-AGE=25
-PI=3.14159
-
-# Read-only variables
-readonly CONSTANT="This cannot be changed"
-
-# Declare local variables inside a function
-show_status() {
-    local status="inside"
-    printf '%s\n' "$status"
-}
-
-# Export variables for child processes
-export PATH="/usr/local/bin:$PATH"
+name='Ada Lovelace'
+printf 'Hello, %s\n' "$name"
 ```
 
-### Variable Usage
+Single quotes preserve literal characters. Double quotes allow `$name`, command
+substitution and some backslash escapes while keeping the result one argument.
+`printf`'s format string `%s\n` prints the value and a newline. Prefer `printf`
+over `echo` when exact output matters.
+
 ```bash
-# Basic usage
-echo "Hello, $NAME"
-
-# Curly braces for clarity
-echo "Hello, ${NAME}"
-
-# Default values
-echo "User: ${USER:-guest}"
-
-# String length
-echo "Name length: ${#NAME}"
-
-# Substring
-echo "First 3 chars: ${NAME:0:3}"
+file="$HOME/notes with spaces.txt"
+printf 'One argument: <%s>\n' "$file"
+printf 'Home: %s\n' "$HOME"
+printf 'Today: %s\n' "$(date +%F)"
 ```
 
-### Arrays
+`$(...)` runs a command and substitutes its standard output; Bash removes trailing
+newlines from that output. Quote the substitution to keep the result one
+argument. Quoting does not make arbitrary command output a safe filename or a
+validated input.
+
 ```bash
-# Declare array
-fruits=("apple" "banana" "orange")
-
-# Access elements
-echo "First fruit: ${fruits[0]}"
-echo "All fruits: ${fruits[@]}"
-echo "Array length: ${#fruits[@]}"
-
-# Add to array
-fruits+=("grape")
-
-# Iterate through array
-for fruit in "${fruits[@]}"; do
-    echo "Fruit: $fruit"
+printf 'one\ntwo\n' > names.txt
+for file in *.txt; do
+    printf 'Matched path: %s\n' "$file"
 done
 ```
 
----
+Bash expands `*.txt` before starting the loop. Each match becomes a separate
+word. If no files match, default behavior leaves the literal `*.txt`; scripts
+that need other behavior should choose and document `nullglob`/`failglob`. Keep
+each expanded filename quoted inside the loop.
 
-## Control Structures
+## Standard streams, pipelines and status
 
-### If Statements
+Commands read standard input (0), write normal output to standard output (1), and
+write diagnostics to standard error (2). These are separate streams until you
+redirect them.
+
 ```bash
-# Basic if
-if [ "$1" = "hello" ]; then
-    echo "Hello there!"
-fi
+printf '%s\n' 'started' 'ERROR timeout' > app.log
+printf '%s\n' 'still running' >> app.log
+grep -n 'ERROR' app.log > matches.txt
+grep -n 'missing' app.log 2> search-errors.txt
+```
 
-# If-else
-if [ -f "$file" ]; then
-    echo "File exists"
+`>` creates or truncates a file before running the command; `>>` appends.
+`grep -n` prints matching line numbers. A no-match search returns status 1, which
+is not the same as an I/O error (usually status 2). Capture `$?` immediately if
+you need it; the next command replaces it.
+
+```bash
+if grep -q 'ERROR' app.log; then
+    printf '%s\n' 'at least one error'
 else
-    echo "File not found"
-fi
-
-# If-elif-else
-if [ "$age" -lt 18 ]; then
-    echo "Minor"
-elif [ "$age" -lt 65 ]; then
-    echo "Adult"
-else
-    echo "Senior"
-fi
-
-# Multiple conditions
-if [ -f "$file" ] && [ -r "$file" ]; then
-    echo "File exists and is readable"
-fi
-```
-
-### Case Statements
-```bash
-case "$1" in
-    "start")
-        echo "Starting service..."
-        ;;
-    "stop")
-        echo "Stopping service..."
-        ;;
-    "restart")
-        echo "Restarting service..."
-        ;;
-    "status")
-        echo "Checking status..."
-        ;;
-    *)
-        echo "Usage: $0 {start|stop|restart|status}"
-        exit 1
-        ;;
-esac
-```
-
-### Loops
-```bash
-# For loop with range
-for i in {1..5}; do
-    echo "Number: $i"
-done
-
-# For loop with list
-for item in "one" "two" "three"; do
-    echo "Item: $item"
-done
-
-# While loop
-counter=0
-while [ $counter -lt 5 ]; do
-    echo "Counter: $counter"
-    counter=$((counter + 1))
-done
-
-# Until loop
-until [ $counter -eq 10 ]; do
-    echo "Counter: $counter"
-    counter=$((counter + 1))
-done
-
-# C-style for loop
-for ((i=0; i<5; i++)); do
-    echo "C-style: $i"
-done
-```
-
----
-
-## Functions
-
-### Function Definition
-```bash
-# Simple function
-greet() {
-    echo "Hello, $1!"
-}
-
-# Function with local variables
-calculate_area() {
-    local width=$1
-    local height=$2
-    local area=$((width * height))
-    echo "Area: $area"
-}
-
-# Function with return value
-is_even() {
-    local num=$1
-    if [ $((num % 2)) -eq 0 ]; then
-        return 0  # true
+    status=$?
+    if (( status == 1 )); then
+        printf '%s\n' 'no matches'
     else
-        return 1  # false
+        printf 'grep failed with status %s\n' "$status" >&2
+        exit "$status"
     fi
-}
-
-# Function with default parameters
-create_user() {
-    local username=${1:-"default_user"}
-    local home_dir=${2:-"/home/$username"}
-    echo "Creating user: $username in $home_dir"
-}
-```
-
-### Function Usage
-```bash
-# Call functions
-greet "Alice"
-calculate_area 10 5
-
-# Check return value
-if is_even 4; then
-    echo "4 is even"
-fi
-
-# Use default parameters
-create_user
-create_user "john" "/home/john"
-```
-
----
-
-## File Operations
-
-### File Testing
-```bash
-# Check if file exists
-if [ -f "$file" ]; then
-    echo "File exists"
-fi
-
-# Check if directory exists
-if [ -d "$dir" ]; then
-    echo "Directory exists"
-fi
-
-# Check if file is readable
-if [ -r "$file" ]; then
-    echo "File is readable"
-fi
-
-# Check if file is executable
-if [ -x "$file" ]; then
-    echo "File is executable"
-fi
-
-# Check whether a path exists and has a nonzero size
-if [ -s "$file" ]; then
-    echo "File is not empty"
 fi
 ```
 
-### File Reading
+`-q` suppresses matching lines; the status communicates match/no-match/error.
+The `if` tests the command's status directly, so expected “no match” is handled
+without pretending every nonzero status has the same meaning.
+
 ```bash
-# Read file line by line
-while IFS= read -r line || [[ -n "$line" ]]; do
-    echo "Line: $line"
-done < "$file"
-
-# Read file into array
-mapfile -t lines < "$file"
-
-# Read specific line
-line_5=$(sed -n '5p' "$file")
-
-# Count lines
-line_count=$(wc -l < "$file")
+grep 'ERROR' app.log | sort | uniq -c
 ```
 
-### File Writing
+A pipe connects standard output from each command to the next command's standard
+input. Here grep selects lines, sort places identical lines together, and `uniq
+-c` counts adjacent repeats. Without additional handling, a pipeline's status is
+the status of its last command. Bash's `set -o pipefail` instead makes the
+pipeline nonzero if a command fails; decide whether that is the right policy for
+your script. See [pipeline status exercise](../fundamentals/13-practice-labs.md).
+
+## Arguments are already separate values
+
+Use `"$@"` to pass all script arguments onward without splitting them. Avoid
+unquoted `$@` and `$*` for argument forwarding.
+
 ```bash
-# Write to file (overwrite)
-echo "content" > "$file"
-
-# Append to file
-echo "content" >> "$file"
-
-# Write multiple lines
-cat > "$file" << EOF
-Line 1
-Line 2
-Line 3
-EOF
-
-# Append multiple lines
-cat >> "$file" << EOF
-Additional line 1
-Additional line 2
-EOF
-```
-
----
-
-## Command Line Arguments
-
-### Argument Handling
-```bash
-# Basic argument access
-echo "Script name: $0"
-echo "First argument: $1"
-echo "Second argument: $2"
-echo "All arguments: $@"
-echo "Number of arguments: $#"
-
-# Shift arguments
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -f|--file)
-            file="$2"
-            shift 2
-            ;;
-        -v|--verbose)
-            verbose=true
-            shift
-            ;;
-        -h|--help)
-            show_help
-            exit 0
-            ;;
-        *)
-            echo "Unknown option: $1"
-            exit 1
-            ;;
-    esac
+#!/usr/bin/env bash
+printf 'Received %d arguments\n' "$#"
+for path in "$@"; do
+    printf 'Path argument: <%s>\n' "$path"
 done
 ```
 
-### Getopts Example
+Save the complete block as `show-args.sh`. Run it with `bash show-args.sh "file with spaces" second.txt`; it should report two arguments and print each path on one line. `bash FILE` does not require execute permission. To run `./show-args.sh` directly instead, first use `chmod u+x show-args.sh`. `$#` is the argument count, `$1` the first, and `$0` the script name.
+
+Parse short options with `getopts`:
+
 ```bash
-#!/bin/bash
-
-# Default values
-file=""
-verbose=false
-help=false
-
-# Parse options
-while getopts ":f:vh" opt; do
-    case $opt in
-        f)
-            file="$OPTARG"
-            ;;
-        v)
-            verbose=true
-            ;;
-        h)
-            help=true
-            ;;
-        \?)
-            echo "Invalid option: -$OPTARG" >&2
-            exit 1
-            ;;
-        :)
-            echo "Option -$OPTARG needs an argument" >&2
-            exit 1
-            ;;
-    esac
-done
-
-# Shift processed options
-shift $((OPTIND-1))
-
-# Use the variables
-if [ "$verbose" = true ]; then
-    echo "Verbose mode enabled"
-fi
-
-if [ -n "$file" ]; then
-    echo "Processing file: $file"
-fi
-```
-
----
-
-## Error Handling
-
-### Exit Codes
-```bash
-# Successful execution
-exit 0
-
-# General error
-exit 1
-
-# Custom error codes
-exit 2  # File not found
-exit 3  # Permission denied
-exit 4  # Invalid input
-```
-
-### Error Handling Functions
-```bash
-# Error function
-error_exit() {
-    echo "Error: $1" >&2
-    exit 1
-}
-
-# Usage function
+#!/usr/bin/env bash
 usage() {
-    echo "Usage: $0 [options]"
-    echo "Options:"
-    echo "  -f FILE    Specify input file"
-    echo "  -v         Verbose mode"
-    echo "  -h         Show this help"
-    exit 1
+    printf 'Usage: %s [-v] -f FILE\n' "$0" >&2
 }
 
-# Check prerequisites
-check_prerequisites() {
-    if ! command -v required_command &> /dev/null; then
-        error_exit "required_command is not installed"
-    fi
-    
-    if [ ! -f "$config_file" ]; then
-        error_exit "Config file not found: $config_file"
-    fi
-}
+verbose=false
+input=''
+while getopts ':f:vh' option; do
+    case $option in
+        f) input=$OPTARG ;;
+        v) verbose=true ;;
+        h) usage; exit 0 ;;
+        :) printf 'Option -%s needs an argument\n' "$OPTARG" >&2; usage; exit 2 ;;
+        \?) printf 'Unknown option: -%s\n' "$OPTARG" >&2; usage; exit 2 ;;
+    esac
+done
+shift "$((OPTIND - 1))"
+
+if [[ -z $input ]]; then
+    usage
+    exit 2
+fi
+printf 'Input path: %s\n' "$input"
+printf 'Verbose: %s\n' "$verbose"
 ```
 
-### Trap for Cleanup
-```bash
-#!/bin/bash
+The leading `:` in `':f:vh'` makes `getopts` report a missing argument with
+`:`; `f:` means `-f` requires a value, while `v` and `h` do not. `OPTARG` holds
+the option value; `OPTIND` marks how many arguments were consumed. `shift` removes
+those parsed options so remaining positional arguments begin at `$1`. `getopts`
+handles short options, not arbitrary long-option syntax.
 
-# Cleanup function
+## Use arrays for a list of paths
+
+A Bash array stores each value separately. This is safer than building a
+space-separated string and trying to recover its boundaries later.
+
+```bash
+files=("$HOME"/*.conf)
+printf 'Found %s paths\n' "${#files[@]}"
+for file in "${files[@]}"; do
+    [[ -e $file ]] || continue
+    printf 'Config: %s\n' "$file"
+done
+```
+
+`"${files[@]}"` expands to one word per array element. The `-e` test skips the
+literal unmatched glob under Bash's default settings. Arrays are Bash syntax, not
+portable POSIX `sh` syntax.
+
+## Conditions and loops
+
+Use `[[ ... ]]` for Bash string/file tests, and `(( ... ))` for integer arithmetic.
+Spacing matters around `[[` and `]]`.
+
+```bash
+if [[ -r $input ]]; then
+    printf '%s\n' 'Readable file'
+else
+    printf 'Cannot read: %s\n' "$input" >&2
+fi
+
+count=0
+while (( count < 3 )); do
+    printf 'Attempt %d\n' "$((count + 1))"
+    ((count += 1))
+done
+```
+
+`-r` tests whether the current process can read the path, not whether another
+service user can. Arithmetic commands return a status based on the arithmetic
+value, so a post-increment from zero can return status 1. Here `((count += 1))`
+returns nonzero only if the new count is zero, which it is not. Under `set -e`,
+this status behavior matters.
+
+## Functions and scope
+
+Functions group commands and receive arguments in `$1`, `$2`, and so on. `local`
+limits a variable to a function's dynamic scope in Bash; nested functions can see
+it. It does not create a completely isolated lexical scope.
+
+```bash
+log() {
+    local level=$1
+    shift
+    printf '[%s] %s\n' "$level" "$*"
+}
+
+log INFO 'service started'
+```
+
+`shift` removes the first function argument. `"$*"` joins the remaining arguments
+into one message with the first character of `IFS` between them. If the exact
+argument boundaries matter, use `"$@"` instead.
+
+A function's `return` value is an exit status from 0 to 255, not a general-purpose
+string result. Print data to stdout or assign a variable when a caller needs a
+larger result.
+
+## Read a file line by line
+
+```bash
+while IFS= read -r line || [[ -n $line ]]; do
+    printf 'Line: %s\n' "$line"
+done < names.txt
+```
+
+`read` normally uses `IFS` to trim/split input and treats backslashes specially.
+Setting `IFS=` preserves leading/trailing whitespace; `-r` disables backslash
+interpretation. The final condition processes a last line even if the file lacks
+its usual newline. The redirection feeds the loop without a pipeline subshell,
+so variables changed in the loop remain available afterward in Bash.
+
+## Failures and shell options
+
+A command's status is a signal from that command, not a universal diagnosis. Handle
+expected nonzero results explicitly. `set -u` makes an unset variable an error;
+use `${value:-default}` when an empty/unset value should be allowed. `set -o
+pipefail` changes how Bash reports a pipeline's status.
+
+`set -e` exits on some unhandled nonzero statuses, but has context-dependent
+exceptions in tests, `&&`/`||` lists, pipelines and functions used as conditions.
+It is not a substitute for defining what success and failure mean. If you use it,
+read the Bash manual and test the script's error paths. This guide does not add a
+blanket `set -e` to every example.
+
+```bash
+if ! cp -- "$source" "$destination"; then
+    printf 'Could not copy %s\n' "$source" >&2
+    exit 1
+fi
+```
+
+`--` ends option parsing for GNU `cp`, useful if a path begins with `-`. Quote
+both variables so each remains one argument. `exit 1` reports failure to the
+calling shell; choose a documented status convention for larger scripts.
+
+## Temporary files and cleanup
+
+Create a unique temporary file with `mktemp`; never construct a shared predictable
+filename in `/tmp`. Keep the path in a variable and quote it at each use.
+
+```bash
+#!/usr/bin/env bash
+tmp_file=$(mktemp) || exit 1
 cleanup() {
     local status=$?
-    echo "Cleaning up..."
-    rm -f -- "$temp_file"
+    trap - EXIT
+    rm -f -- "$tmp_file" || printf 'Could not remove temporary file\n' >&2
     exit "$status"
 }
-
-# Create temporary file
-temp_file=$(mktemp) || exit 1
-
-# Register cleanup only after creating the file
 trap cleanup EXIT
 
-# Your script logic here
-echo "Processing..."
+printf '%s\n' 'temporary data' > "$tmp_file"
+wc -l < "$tmp_file"
 ```
 
----
+The `EXIT` trap runs when the shell exits. It saves the prior status before
+cleanup, disables its own trap to avoid recursion, and exits with the saved
+status. Cleanup failure is reported but does not mask the original result. A
+script handling sensitive data may need stronger cleanup and storage controls;
+ordinary deletion does not guarantee secure erasure on modern filesystems.
 
-## Text Processing
+## Debug before running
 
-### String Manipulation
 ```bash
-# String length
-str="Hello World"
-echo "Length: ${#str}"
-
-# Substring
-echo "First 5 chars: ${str:0:5}"
-echo "From position 6: ${str:6}"
-
-# String replacement
-echo "Replace 'World' with 'Linux': ${str/World/Linux}"
- 
-# Remove prefix/suffix
-filename="file.txt"
-echo "Without extension: ${filename%.txt}"
-echo "Without 'file.' prefix: ${filename#file.}"
+bash -n script.sh
+bash -x script.sh
 ```
 
-### Pattern Matching
+`bash -n` checks Bash syntax without running the commands. `bash -x` prints
+expanded commands as Bash executes them, which can expose secrets; do not enable
+it blindly on credential-handling scripts. [ShellCheck](https://www.shellcheck.net/)
+can identify many shell mistakes, but passing it does not prove correctness or safety.
+
+## Small complete example
+
+This script takes a file path, counts lines, and fails clearly when the argument
+is missing or unreadable. Save as `line-count.sh` in a practice directory:
+
 ```bash
-# Check if string starts with pattern
-if [[ "$string" =~ ^[A-Z] ]]; then
-    echo "Starts with uppercase"
+#!/usr/bin/env bash
+set -u
+
+if (( $# != 1 )); then
+    printf 'Usage: %s FILE\n' "$0" >&2
+    exit 2
 fi
 
-# Extract regex groups
-if [[ "$email" =~ ^([a-zA-Z0-9._%+-]+)@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})$ ]]; then
-    username="${BASH_REMATCH[1]}"
-    domain="${BASH_REMATCH[2]}"
-    echo "Username: $username"
-    echo "Domain: $domain"
-fi
-```
-
----
-
-## Advanced Features
-
-### Associative Arrays
-```bash
-# Declare associative array
-declare -A config
-
-# Set values
-config["host"]="localhost"
-config["port"]="8080"
-config["user"]="admin"
-
-# Access values
-echo "Host: ${config[host]}"
-echo "Port: ${config[port]}"
-
-# Iterate through keys
-for key in "${!config[@]}"; do
-    echo "$key: ${config[$key]}"
-done
-```
-
-### Process Substitution
-```bash
-# Compare two files
-diff <(sort file1.txt) <(sort file2.txt)
-
-# Process output
-while read line; do
-    echo "Processing: $line"
-done < <(grep "pattern" file.txt)
-```
-
-### Here Documents
-```bash
-# Create configuration file
-cat > config.conf << 'EOF'
-[server]
-host = localhost
-port = 8080
-user = admin
-
-[database]
-host = db.example.com
-port = 5432
-EOF
-```
-
----
-
-## Best Practices
-
-### Script Organization
-```bash
-#!/bin/bash
-
-# 1. Shebang and header
-# 2. Configuration and constants
-# 3. Function definitions
-# 4. Main script logic
-# 5. Error handling
-
-# Configuration
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="$SCRIPT_DIR/config.conf"
-LOG_FILE="$SCRIPT_DIR/script.log"
-
-# Constants
-readonly MAX_RETRIES=3
-readonly TIMEOUT=30
-
-# Functions
-setup_logging() {
-    : # Replace with logging setup
-}
-
-validate_input() {
-    : # Replace with input validation
-}
-
-process_data() {
-    : # Replace with processing logic
-}
-
-# Main logic
-main() {
-    setup_logging
-    validate_input "$@"
-    process_data
-}
-
-# Call main
-main "$@"
-```
-
-### Security Considerations
-```bash
-# Use quotes around variables
-echo "$variable"  # Good
-echo $variable    # Bad
-
-# Use a complete test; [ ] also works for this equality check
-if [[ "$var" = "value" ]]; then
-    printf '%s\n' "Matched"
+file=$1
+if [[ ! -r $file ]]; then
+    printf 'Not readable: %s\n' "$file" >&2
+    exit 1
 fi
 
-# Validate input
-if [[ ! "$1" =~ ^[0-9]+$ ]]; then
-    error_exit "Invalid number: $1"
-fi
-
-# Use read -r for input
-read -r user_input
-
-# Quote file arguments directly; do not use shell-escaped text as a filename
-printf 'Input: %s\n' "$user_input"
-```
-
-### Performance Tips
-```bash
-# Use local variables in functions
-function process() {
-    local var="$1"  # Keep function state separate from the caller
+lines=$(wc -l < "$file") || {
+    printf 'Could not count lines: %s\n' "$file" >&2
+    exit 1
 }
-
-# Use built-in commands when possible
-# Use printf instead of echo for complex output
-printf "User: %s, Age: %d\n" "$user" "$age"
-
-# Use command substitution when you need its output
-# result=$(command) removes trailing newlines; do not add temp files just for speed
-
-# Use arrays for multiple values
-# Instead of: var1, var2, var3
-# Use: array=(var1 var2 var3)
+printf '%s: %s lines\n' "$file" "$lines"
 ```
 
----
-
-## Common Patterns
-
-### Configuration File Parser
-
-This small parser accepts plain `key=value` lines, not shell syntax or a full INI
-format. Quotes remain literal; there is no variable expansion or inline-comment
-handling. Do not `source` a configuration file from an untrusted source.
-
-```bash
-declare -A config=()
-
-parse_config() {
-    local config_file="$1"
-    
-    while IFS='=' read -r key value || [[ -n "$key$value" ]]; do
-        
-        # Remove leading/trailing whitespace
-        key="${key#"${key%%[![:space:]]*}"}"
-        key="${key%"${key##*[![:space:]]}"}"
-        value="${value#"${value%%[![:space:]]*}"}"
-        value="${value%"${value##*[![:space:]]}"}"
-
-        # Skip blank lines and full-line comments, including indented ones
-        [[ -z $key || $key == \#* ]] && continue
-        
-        # Store in associative array
-        config["$key"]="$value"
-    done < "$config_file"
-}
-```
-
-### Logging Framework
-```bash
-log() {
-    local level="$1"
-    shift
-    local message="$*"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    
-    case "$level" in
-        DEBUG)
-            echo "[$timestamp] DEBUG: $message" >> "$LOG_FILE"
-            ;;
-        INFO)
-            echo "[$timestamp] INFO: $message" | tee -a "$LOG_FILE"
-            ;;
-        WARN)
-            printf '[%s] WARN: %s\n' "$timestamp" "$message" | tee -a "$LOG_FILE" >&2
-            ;;
-        ERROR)
-            printf '[%s] ERROR: %s\n' "$timestamp" "$message" | tee -a "$LOG_FILE" >&2
-            ;;
-    esac
-}
-```
-
-### Retry Mechanism
-```bash
-retry() {
-    if (( $# < 2 )); then
-        printf '%s\n' 'Usage: retry POSITIVE_COUNT command [args...]' >&2
-        return 2
-    fi
-    local max_attempts="$1"
-    shift
-    local attempt=1
-
-    if [[ ! "$max_attempts" =~ ^[1-9][0-9]*$ ]] || (( $# == 0 )); then
-        printf '%s\n' 'Usage: retry POSITIVE_COUNT command [args...]' >&2
-        return 2
-    fi
-    
-    while [ $attempt -le $max_attempts ]; do
-        if "$@"; then
-            return 0
-        else
-            echo "Attempt $attempt failed. Retrying..."
-            attempt=$((attempt + 1))
-            if (( attempt <= max_attempts )); then
-                sleep 1
-            fi
-        fi
-    done
-    
-    echo "Command failed after $max_attempts attempts"
-    return 1
-}
-```
-
-For example, `retry 3 curl --fail --max-time 5 https://example.com` preserves each
-argument. Retry only operations that are safe to repeat. This fixed-delay helper
-is for small local scripts, not a production retry policy; it does not add
-exponential backoff or jitter. A function run as an `if` condition must handle its
-own failures explicitly rather than relying on `set -e`.
+`$#` checks the number of arguments; `$1` is assigned only after that check.
+`wc -l < "$file"` counts newline characters and avoids printing the filename as
+a second column. A final unterminated line is not counted by `wc -l`, so text files
+should normally end with a newline. `$(...)` captures the count for `printf`.
+`set -u` catches accidental use of unset variables; explicit checks handle expected
+input errors.
 
 ## Further reading
 
-- [Bash manual: functions and local variables](https://www.gnu.org/software/bash/manual/html_node/Shell-Functions.html)
-- [Bash manual: quoting](https://www.gnu.org/software/bash/manual/html_node/Quoting.html)
-- [Bash manual: traps](https://www.gnu.org/software/bash/manual/html_node/Bourne-Shell-Builtins.html)
-- [ShellCheck](https://www.shellcheck.net/): catches many shell mistakes, but does not prove a script is safe.
+- [Bash Reference Manual](https://www.gnu.org/software/bash/manual/bash.html)
+- [Bash pitfalls](https://mywiki.wooledge.org/BashPitfalls)
+- [ShellCheck](https://www.shellcheck.net/)
+- [Linux text and pipeline examples](../fundamentals/03-shell-and-text.md)
+
+[Back to the Linux Helpbook](../README.md)
