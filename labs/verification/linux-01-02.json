@@ -1,0 +1,57 @@
+{
+  "lesson_id": "linux-01-02",
+  "verified_date": "2026-10-26",
+  "environment": {
+    "provider": "Composio isolated remote sandbox",
+    "distribution": "Debian 13.7 (trixie)",
+    "bash": "5.2.37(1)-release",
+    "coreutils": "9.7",
+    "virtualization_report": "kvm",
+    "limits": [
+      "No provisioning lifecycle or systemd management verified"
+    ]
+  },
+  "provenance": "Exact command/output transcription from COMPOSIO_REMOTE_BASH_TOOL log_ss1PPmxNnmDL, session vast. Repeated runs are preserved in sequence. The mistyped filename is a deliberate failing demonstration.",
+  "results": [
+    {
+      "command": "cat /etc/os-release",
+      "stdout": "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION=\"13 (trixie)\"\nVERSION_CODENAME=trixie\nDEBIAN_VERSION_FULL=13.7\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+      "stderr": "",
+      "exit_code": 0
+    },
+    {
+      "command": "cat /etc/os-release",
+      "stdout": "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION=\"13 (trixie)\"\nVERSION_CODENAME=trixie\nDEBIAN_VERSION_FULL=13.7\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+      "stderr": "",
+      "exit_code": 0
+    },
+    {
+      "command": "cat /usr/lib/os-release",
+      "stdout": "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION=\"13 (trixie)\"\nVERSION_CODENAME=trixie\nDEBIAN_VERSION_FULL=13.7\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+      "stderr": "",
+      "exit_code": 0
+    },
+    {
+      "command": "cat /etc/os-releas",
+      "stdout": "",
+      "stderr": "cat: /etc/os-releas: No such file or directory\n",
+      "exit_code": 1
+    },
+    {
+      "command": "cat /etc/os-release",
+      "stdout": "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION=\"13 (trixie)\"\nVERSION_CODENAME=trixie\nDEBIAN_VERSION_FULL=13.7\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+      "stderr": "",
+      "exit_code": 0
+    }
+  ],
+  "sources": [
+    {
+      "url": "https://www.freedesktop.org/software/systemd/man/latest/os-release.html",
+      "status": "Retrieved; precedence and field definitions checked"
+    },
+    {
+      "url": "https://www.gnu.org/software/coreutils/manual/html_node/cat-invocation.html",
+      "status": "Official link; web extraction inaccessible. Actual cat file reads and installed version verified."
+    }
+  ]
+}

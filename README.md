@@ -1,67 +1,63 @@
 # Linux Helpbook
 
-A guided set of Linux notes for students and junior engineers learning to work
-with servers. It covers the ideas behind the commands, then shows how to inspect
-and change things safely in a lab. It is not an LPIC syllabus or a wall of flags.
+Learn to understand a Linux system before changing it. This course is for students and junior engineers starting from the command line, with explanations of what each command does, how to read its output and when its results are not enough.
 
-## Learning path
+## Start here
 
-Start with [Linux fundamentals](fundamentals/README.md). It begins with the kernel,
-shell and files, then builds through permissions, processes, resources, services,
-packages and networking. Each topic links to a separate quick reference or
-troubleshooting note when you want more detail.
+1. Read [practice environment guidance](00-start-here/00-setup.md). The course uses disposable environments, never production systems.
+2. Read [how to use the course](00-start-here/01-how-to-use-this-repo.md).
+3. Follow [ROADMAP.md](ROADMAP.md) for the lesson order, prerequisites, level and estimated study hours.
+4. Use the [glossary](glossary.md) when a term is unfamiliar.
 
-You can also go straight to a task:
+**Build status:** this is the first course increment, not a completed fundamentals-to-advanced course. Two lessons have sandbox execution evidence and are under editorial review: [Identify the Running Kernel](01-fundamentals/01-running-kernel.md) and [Identify the Installed Distribution](01-fundamentals/02-distribution.md). Remaining lessons are explicitly marked planned. VM provisioning has not been tested end to end; the commands were run in an already provisioned isolated Debian sandbox.
 
-- [Look up a command](commands/commands.md): what it is for, useful options and links to worked lessons.
-- [Understand file permissions](fundamentals/permissions.md): owner/group/other, directory search and safe changes.
-- [Write Bash scripts](shell-scripting/scripting.md): shell behavior, quoting, arguments, functions and error handling.
-- [Investigate disk space](troubleshooting/disk-space.md): capacity, inodes and why `df` and `du` can disagree.
-- [Investigate slow processes](troubleshooting/processes-and-memory.md): CPU, memory, waits and process state.
-- [Trace a network failure](troubleshooting/network-connectivity.md): DNS, routes, listening sockets, TCP, TLS and HTTP.
-- [Use Vim](vim/vim.md): a small editor reference for reading and editing text.
+## Course structure
 
-## How to use the examples
-
-The guides explain what a command reads or changes, why its options matter, and
-what the output can and cannot tell you. Some outputs vary by distribution,
-version, permissions, workload and host configuration. Where a command is
-interactive or mutates state, the guide says so.
-
-A few lessons use fictional sample files. From the repository root, you can
-create your own practice directory with:
-
-```bash
-source fundamentals/labs/setup.sh
-printf '%s\n' "$LINUX_LAB"
+```text
+README.md
+ROADMAP.md
+AGENTS.md
+STYLE_GUIDE.md
+glossary.md
+00-start-here/
+01-fundamentals/
+02-intermediate/     planned
+03-advanced/         planned
+labs/
+  verification/
+cheatsheets/         planned
+CHANGELOG.md
 ```
 
-The script creates new files in a private temporary directory and sets
-`LINUX_LAB` for this shell. It does not install software or change existing
-application files. Run it again in another terminal if needed. Examples that
-need an optional tool, systemd host, administrator privileges or a second
-terminal say so; a missing tool is not evidence that the system is broken.
+Fundamentals introduce one concept at a time. Intermediate lessons apply prerequisite concepts to a bounded task. Advanced lessons examine one deeper mechanism or failure. Planned directories are not populated with placeholder lessons just to make the tree look finished.
 
-Unless stated otherwise, commands assume Bash on Linux and common GNU/Linux
-utilities. Some minimal containers omit tools and manuals; other Unix systems may
-use different options. Run examples on a Linux VM, container or machine you
-control. Do not experiment with service changes, deletion, mounts, package
-installation or signals on production systems.
+Each lesson follows the [style guide](STYLE_GUIDE.md): learning outcomes, why the problem matters, a mental model, explained hands-on commands with real output, verification, common mistakes, troubleshooting, interview questions, takeaways, next steps and official further reading.
 
-## Find your level
+Separate labs and one-page cheatsheets will follow their prerequisite lessons. No cloud lab or paid resource is required by the initial lesson. Future cloud labs must state costs and end with verified teardown.
 
-- **New to Linux:** source the practice files described above. Then read fundamentals in order, pausing to run commands and explain results in your own words. The [fundamentals index](fundamentals/README.md) has the setup steps.
-- **Know the basics:** use the command reference, then pick a troubleshooting guide and follow its checks from the affected machine.
-- **Preparing for interviews:** practice explaining why you chose a command, what its result proves, and what you would check next.
+## Verification you can inspect
 
-## Sources and verification
+[CHANGELOG.md](CHANGELOG.md) records per-lesson dates, exact tool versions, evidence and limitations. Execution evidence lives under [labs/verification](labs/verification/). A dated check proves behavior in that environment, not on every Linux installation.
 
-Each technical lesson links to relevant manuals or upstream documentation. The
-[verification notes](VERIFICATION.md) state what was actually checked and what
-was not. Syntax parsing, a successful local lab and a command that has only been
-read in its manual are different kinds of evidence.
+Anything not exercised is marked `UNVERIFIED`. Syntax checks and link checks are reported separately from command execution. The current environment does not establish working systemd service management or a tested VM lifecycle.
 
-The named [Linux Tutorial](https://github.com/samankhalife/linux-Tutorial) is
-another broad Linux learning resource. This repository uses its visible topic
-organization as inspiration, but its explanations and examples here are
-independently written.
+## Existing Helpbook material
+
+These pages remain available while reviewed replacements are built. They do not yet follow the new lesson template or its complete command-verification contract:
+
+- [Existing fundamentals](fundamentals/README.md)
+- [Command reference](commands/commands.md)
+- [Shell scripting](shell-scripting/scripting.md)
+- [Troubleshooting](troubleshooting/)
+- [Vim](vim/vim.md)
+- [Earlier verification scope](VERIFICATION.md)
+
+Useful explanations, attribution and safe test tooling will be preserved during migration. Do not assume the earlier verification notes cover the new course.
+
+## Contributing and maintenance
+
+Read [AGENTS.md](AGENTS.md) and [STYLE_GUIDE.md](STYLE_GUIDE.md) before writing. Read the roadmap, prior lesson and glossary before each new lesson. Verify its commands in a suitable isolated environment, then update its evidence, roadmap and changelog.
+
+Re-check lessons every three to six months and after relevant tool changes. This is a maintenance policy, not a scheduled automation. Changes go through a review branch and pull request; the owner retains merge control.
+
+No license has been selected for this repository. This change does not add or imply a license.
