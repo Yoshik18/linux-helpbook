@@ -1,110 +1,115 @@
-# 9. Packages and software
+# 9. Find, install and inspect software packages
 
-[Previous: Boot, services and logs](08-boot-services-and-logs.md) · [Index](README.md) · [Next: Networking](10-networking.md)
+First identify the distribution. Package names and commands differ. Inspection
+is safe to start with; installation and upgrades change the machine and belong
+in a disposable VM or an explicitly approved maintenance window.
 
-## A package is more than an executable
+## Check what is already available
 
-A distribution package contains files plus metadata: its name, architecture,
-version, dependencies and sometimes installation scripts. The package database
-records which package owns which paths. This lets the distribution coordinate
-changes across programs instead of treating every download as an independent
-installer.
+```bash
+cat /etc/os-release
+command -v bash
+command -v curl
+command -v ss
+```
 
-A repository publishes packages and an index describing available versions.
-The high-level manager selects a compatible set from configured repositories;
-the lower-level package system records and applies the transaction. Debian and
-Ubuntu commonly pair APT with dpkg; Fedora and related systems pair DNF with RPM.
-Package names and supported releases differ, even for the same software.
+A tool missing from `PATH` may be absent, installed elsewhere or hidden by an
+environment. Do not install another copy before checking the selected executable.
 
-Dependencies are constraints, not just a list of downloads. One program may
-require a particular library interface while another conflicts with a proposed
-replacement. The newest upstream version is therefore not automatically the
-version the distribution will select. Repository priorities, held packages,
-architecture and release policy matter too.
-
-## Refreshing information is not upgrading software
-
-In APT, `update` refreshes repository metadata; `upgrade` changes installed
-packages. `apt upgrade` may add dependencies but does not remove existing
-packages. `full-upgrade` can remove packages to resolve the whole transaction.
-These are explanations, not commands to run as part of this chapter. [apt.8.en](https://manpages.debian.org/bookworm/apt/apt.8.en.html)
-
-Do not transfer that vocabulary blindly: DNF's `update` is an alias for
-`upgrade` in the referenced DNF documentation. DNF major versions and
-distribution policies vary; read the local help before planning changes. [command_ref](https://dnf.readthedocs.io/en/latest/command_ref.html)
-
-A version string may include a distribution revision as well as the upstream
-version. Distributions can backport security fixes without adopting every new
-upstream feature. Check the distribution advisory and package changelog rather
-than declaring software vulnerable from its upstream-looking number alone.
-
-Repository authentication establishes provenance, not harmlessness. APT verifies
-signed repository metadata and follows checksums down to package contents; this
-is not a separate end-user signature check on every package. A compromised
-trusted signing key or a malicious trusted publisher remains a risk. Do not
-bypass signature failures to make an installation proceed. [apt-secure.8.en](https://manpages.debian.org/bookworm/apt/apt-secure.8.en.html)
-
-## Three investigations before changing anything
-
-### 1. Installed and available are different facts
-
-On Debian-family systems, these inspect the local database and cached metadata:
+## Debian/Ubuntu: query before installing
 
 ```bash
 dpkg-query -W bash
 apt-cache policy bash
+apt-cache search '^iproute2$'
+apt-cache show iproute2
 ```
 
-The first reports the recorded installed version. The second distinguishes
-installed and candidate versions and their known origins. A candidate is what
-the current policy would select, not proof that metadata is fresh or an upgrade
-has happened. No repository refresh or installation is performed here. [dpkg-query.1](https://man7.org/linux/man-pages/man1/dpkg-query.1.html)
+`dpkg-query -W` reads installed package information. `apt-cache policy` separates
+the installed version, candidate and origins from cached metadata. A candidate
+is not proof the cache is current. On Debian-family systems, `ss` and `ip` are
+normally supplied by `iproute2`.
 
-### 2. Find the program the shell actually selects
+On Fedora/RHEL-family systems, analogous queries include:
 
 ```bash
-command -v bash
-printf '%s\n' "$PATH"
-dpkg-query -L bash
+rpm -q bash
+rpm -ql bash
+dnf info iproute
+dnf provides '*/ss'
 ```
 
-`PATH` is an ordered search list for external commands without a slash.
-`command -v` can also identify a builtin, alias or function: its output is not
-always a filesystem pathname. Compare an external command's selected path with
-the package file list before assuming it is the distribution copy. Local tools
-in `/usr/local/bin` or a language environment may take precedence.
+`rpm` queries the local database; DNF queries may contact configured repositories.
+DNF4/DNF5 and distribution versions differ. Use local help for exact behavior.
 
-Package executables commonly live in `/usr/bin`, configuration in `/etc`, and
-shared data in `/usr/share`. Merged-`/usr` layouts can make `/bin` a symlink;
-library locations vary by architecture. Query ownership rather than guessing
-from a path. RPM systems provide analogous local queries such as `rpm -q bash`
-and `rpm -ql bash`; these examples are not tested here.
+## Install only in your own disposable lab
 
-### 3. Finding a command does not mean it can start
+These commands change packages and may require elevation. They are examples,
+not executed checks or approval to update a real server:
 
-For a trusted, known executable, inspect metadata without executing it:
+```bash
+# Debian/Ubuntu lab
+sudo apt update
+sudo apt install iproute2 lsof
+
+# Fedora-family lab: use this alternative, not both sets
+sudo dnf install iproute lsof
+```
+
+APT `update` refreshes metadata; it does not upgrade installed packages. `apt
+upgrade` changes installed software and differs from `full-upgrade`, which may
+remove packages to resolve dependencies. In the referenced DNF documentation,
+`update` is an alias for `upgrade`: do not transfer APT vocabulary blindly.
+Never disable repository signature checks to get past an error.
+
+## Find which package owns an executable
+
+```bash
+type -a bash
+dpkg-query -L bash
+# Query the path recorded in the package's file list above.
+# Depending on the distribution, that can be /bin/bash or /usr/bin/bash.
+dpkg-query -S /bin/bash /usr/bin/bash
+```
+
+One of those paths may report no match. Package databases do not necessarily
+resolve filesystem aliases: on merged-`/usr` systems both paths can reach the
+same executable while only one is recorded. Use the path shown by `dpkg-query -L`.
+A local copy in `/usr/local/bin` can win over a distribution copy in `/usr/bin`.
+For RPM systems use `rpm -qf` with the path recorded by `rpm -ql bash`.
+A language virtual environment or bundled application may not be owned by the
+OS package database at all.
+
+For a trusted executable with ELF tools installed:
 
 ```bash
 readelf -d /usr/bin/bash
 ```
 
-When present, `NEEDED` entries name shared-library dependencies. The dynamic
-loader resolves these using its configured search rules, not shell `PATH`.
-A missing library or incompatible ABI (the binary interface between components)
-can stop a program before its main logic runs. Loader details differ between
-C libraries; the cited reference describes glibc. [ld.so.8](https://man7.org/linux/man-pages/man8/ld.so.8.html)
+`NEEDED` entries list dynamic-library dependencies. Library lookup is separate
+from shell `PATH`. Do not use `ldd` indiscriminately on untrusted downloads;
+inspecting a file and executing an unfamiliar loader are different risks.
 
-## Packages, bundles and source builds
+## Practice
 
-A bundled application may carry private libraries; a source build may install
-outside the distribution database. Both can be legitimate, but they shift
-responsibility for tracking files, vulnerabilities and upgrades. A language
-package manager also has its own environment and dependency rules. Avoid
-silently overwriting distribution-managed files, and establish an update and
-removal plan before choosing an alternative delivery method.
+Find the installed Bash version and identify its package-owned files. Explain
+why an older-looking version string is not sufficient proof of a vulnerability.
 
-## Check your understanding
+<details>
+<summary>One Debian-family answer</summary>
 
-- Why might refreshing APT metadata leave a vulnerable running program unchanged?
-- How could two shells run different executables for the same command name?
-- Why does a valid repository signature not prove a package is safe?
+```bash
+dpkg-query -W bash
+dpkg-query -L bash
+apt-cache policy bash
+```
+
+Distributions may backport fixes. Consult the distribution advisory and package
+changelog before judging security by the upstream-looking version alone.
+
+</details>
+
+[Manual: APT](https://manpages.debian.org/bookworm/apt/apt.8.en.html)
+· [APT repository trust](https://manpages.debian.org/bookworm/apt/apt-secure.8.en.html)
+· [DNF](https://dnf.readthedocs.io/en/latest/command_ref.html)
+· [Previous](08-boot-services-and-logs.md) · [Index](README.md) · [Next](10-networking.md)

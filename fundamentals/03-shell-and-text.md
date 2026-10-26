@@ -1,69 +1,94 @@
-# 3. Shell and text
+# 3. Search logs and build useful pipelines
 
-[Previous: filesystem and paths](02-filesystem-and-paths.md) · [Index](README.md) · [Next: users and access](04-users-and-access.md)
+Use the [practice files](01-how-linux-works.md). The log formats below are small,
+fictional fixtures, not a parser for arbitrary application logs or CSV.
 
-The shell turns command text into arguments, connections, and processes. Learning what it changes before a program starts prevents errors that look like broken tools but are really argument or redirection mistakes. Examples here use Bash, not arbitrary `sh` implementations.
-
-## Arguments are not just visible words
-
-Single quotes preserve literal text. Double quotes permit parameter expansion such as `$name` and command substitution such as `$(command)`, while preventing ordinary word splitting and filename expansion on the result. [Bash manual](https://man7.org/linux/man-pages/man1/bash.1.html) Prefer `printf '%s\n' "$name"` when printing a variable: the fixed format string separates data from formatting instructions.
-
-Unquoted variable expansions in ordinary command arguments can split into several words and then expand wildcard characters into matching filenames. Quoting `"$file"` keeps a filename containing spaces as one argument. Conversely, `*.log` deliberately asks the shell to expand matching filenames; `'*.log'` passes a literal asterisk pattern to the program. [Bash manual](https://man7.org/linux/man-pages/man1/bash.1.html) Shell globs and `grep` regular expressions are different languages. A quoted regex reaches `grep` unchanged and is then interpreted there.
-
-Command substitution captures standard output and strips trailing newlines. [Bash manual](https://man7.org/linux/man-pages/man1/bash.1.html) It is useful for a small value, not a general mechanism for storing arbitrary binary data. Do not build command strings from input and execute them with `eval`; keep values as arguments.
-
-## Streams and status answer different questions
-
-Programs conventionally receive standard input on descriptor 0, write results to standard output on 1, and diagnostics to standard error on 2. A pipe, `a | b`, connects `a`'s standard output to `b`'s standard input; it does not include standard error by default. [Bash manual](https://man7.org/linux/man-pages/man1/bash.1.html) The programs can run concurrently, and the kernel can make a writer wait if the pipe fills.
-
-The shell sets up redirections: `< file` supplies input, `> file` creates or truncates output, `>> file` appends, and `2> file` captures diagnostics. [Bash manual](https://man7.org/linux/man-pages/man1/bash.1.html) Never redirect output back to the same input file when filtering: truncation can happen before the program reads it. Use a distinct output path.
-
-An **exit status** is separate from printed output. Zero conventionally means success; nonzero meanings depend on the program. Bash's `$?` holds the most recent command or pipeline status, so capture it before another command overwrites it. Normally a pipeline reports the last command's status. Bash's `pipefail` option instead reports the rightmost nonzero status, or zero if all succeed. [Bash manual](https://man7.org/linux/man-pages/man1/bash.1.html) It exposes failures; it does not explain whether a nonzero status was expected.
-
-## Lab: filter a known fixture
-
-Prerequisites: Bash, GNU `grep`, `cut`, `sort`, and `wc`; an existing writable scratch parent. Run the complete block. `set +e` is local to the subshell so intentional failures remain observable even if your calling shell uses `errexit`. No real logs or environment dumps are used.
+## Find an error and keep its line number
 
 ```bash
-(
-    set +e
-    lab=$(mktemp -d "${TMPDIR:-/tmp}/linux-text.XXXXXX") || exit 1
-    printf '%s\n' 'INFO api ready' 'ERROR worker timeout' \
-        'ERROR api refused' 'INFO worker ready' > "$lab/events.txt"
-    grep '^ERROR ' "$lab/events.txt" | cut -d ' ' -f 2 | sort
-    grep -F 'ERROR' "$lab/events.txt" | wc -l
-
-    for pattern in '^ERROR' '^DEBUG' '['; do
-        if grep "$pattern" "$lab/events.txt" > "$lab/matches.txt" 2> "$lab/diagnostic.txt"; then
-            status=0
-        else
-            status=$?
-        fi
-        printf 'pattern=%s status=%s\n' "$pattern" "$status"
-    done
-    cat "$lab/diagnostic.txt"
-
-    set +o pipefail
-    false | wc -l
-    printf 'default pipeline status=%s\n' "$?"
-    set -o pipefail
-    false | wc -l
-    printf 'pipefail pipeline status=%s\n' "$?"
-
-    export HELPBOOK_MODE='practice only'
-    bash -c 'printf "child value=<%s>\n" "$HELPBOOK_MODE"'
-    printf 'Retained lab: %s\n' "$lab"
-)
+grep -n 'ERROR' "$LINUX_LAB/logs/app.log"
+grep -in 'error' "$LINUX_LAB/logs/app.log"
+grep -n -C 1 'db refused' "$LINUX_LAB/logs/app.log"
+grep -v '^INFO' "$LINUX_LAB/logs/app.log"
 ```
 
-Expect sorted service names `api` and `worker`, then a count of two. The three patterns return 0 (match), 1 (no match), and 2 (invalid regex). GNU `grep` documents these statuses; with `-q`, a match can yield zero even if an error was detected, so this lab intentionally avoids `-q`. [grep(1)](https://man7.org/linux/man-pages/man1/grep.1.html) Diagnostic wording can vary.
+`-n` prints line numbers, `-i` ignores case, `-C 1` includes one context line on
+either side and `-v` excludes matches. Expect ERROR lines 2, 4 and 5. Use `-F`
+for literal text containing characters you do not want interpreted as a regex.
 
-Both `false | wc -l` pipelines print zero lines counted, but their statuses differ: 0 without `pipefail`, 1 with it. The child shell prints the exported practice value. Exported variables form part of a child's environment; ordinary unexported shell variables do not automatically do so. [Bash manual](https://man7.org/linux/man-pages/man1/bash.1.html) A child's changes do not update its parent's variables.
+## Count repeated errors
 
-**Validation:** this lab block has not been run. It is a small text fixture, not a parser for arbitrary filenames, structured logs, or binary data. Continue with the existing [shell scripting guide](../shell-scripting/scripting.md) for functions and control flow.
+```bash
+grep '^ERROR ' "$LINUX_LAB/logs/app.log" | sort | uniq -c | sort -nr
+```
 
-## Check your understanding
+Read left to right: select errors, group equal lines, count adjacent duplicates,
+then sort counts numerically in reverse order. Expect `ERROR api timeout` twice
+and `ERROR db refused` once. `uniq` alone does not combine separated duplicates.
 
-1. Why can `grep` return 1 without reporting an error?
-2. Why can a pipeline succeed when its first command fails?
-3. What changes when you quote `"$file"`, and what does quoting not do to a regex interpreted by `grep`?
+## Select fields and filter by a value
+
+```bash
+awk '$4 >= 500 {print $1, $3, $4}' "$LINUX_LAB/logs/access.log"
+awk '$4 >= 500 {count++} END {print count+0}' "$LINUX_LAB/logs/access.log"
+cut -d, -f1,3 "$LINUX_LAB/data/report.csv"
+awk -F, 'NR > 1 && $2 == "prod" {total += $3} END {print total+0}' "$LINUX_LAB/data/report.csv"
+```
+
+The access fixture is whitespace-separated: client, method, path, status,
+duration. There are two 500 responses. `-F,` changes awk's field separator; `NR
+> 1` skips the CSV header. The production request total is `165`. These tools
+are not a full CSV parser when quoted fields can contain commas or newlines.
+
+## Preview a text change before overwriting anything
+
+```bash
+sed 's/environment=staging/environment=production/' "$LINUX_LAB/config/app.conf"
+sed 's/environment=staging/environment=production/' "$LINUX_LAB/config/app.conf" > "$LINUX_LAB/config/app.preview"
+diff -u "$LINUX_LAB/config/app.conf" "$LINUX_LAB/config/app.preview"
+```
+
+`sed` prints a transformed copy by default. `diff -u` shows the changed line;
+status 1 means files differ, not that diff failed. Do not redirect a filter's
+output to its own input file: the shell may truncate the input before reading it.
+
+## Quote paths, and separate results from diagnostics
+
+```bash
+file="$LINUX_LAB/notes/file with spaces.txt"
+cat "$file"
+grep ERROR "$LINUX_LAB/logs/app.log" > "$LINUX_LAB/errors.txt"
+grep ERROR "$LINUX_LAB/missing.log" 2> "$LINUX_LAB/read-errors.txt"
+printf 'grep exit status: %s\n' "$?"
+cat "$LINUX_LAB/read-errors.txt"
+```
+
+Quoted `"$file"` stays one argument. `>` captures stdout; `2>` captures stderr.
+GNU grep returns 0 for a match, 1 for no match and usually 2 for an error. Capture
+`$?` before another command changes it. Run deliberate-failure examples outside
+blanket `set -e` handling. [Practice lab 1](13-practice-labs.md) compares pipeline
+statuses with and without `pipefail`.
+
+## Practice
+
+Print the two most frequent client IPs in the access fixture. Extract only the
+ERROR lines, without changing the original log.
+
+<details>
+<summary>One answer</summary>
+
+```bash
+awk '{print $1}' "$LINUX_LAB/logs/access.log" | sort | uniq -c | sort -k1,1nr -k2,2 | head -n 2
+grep '^ERROR ' "$LINUX_LAB/logs/app.log" > "$LINUX_LAB/error-only.log"
+```
+
+The top clients are documentation addresses `192.0.2.10` and `192.0.2.11`, each
+with two requests. They are invented fixture data, not real traffic.
+
+</details>
+
+[Manual: grep](https://man7.org/linux/man-pages/man1/grep.1.html)
+· [awk](https://man7.org/linux/man-pages/man1/awk.1p.html)
+· [Bash pipelines and quoting](https://man7.org/linux/man-pages/man1/bash.1.html)
+· [More Bash examples](../shell-scripting/scripting.md)
+· [Previous](02-filesystem-and-paths.md) · [Index](README.md) · [Next](04-users-and-access.md)

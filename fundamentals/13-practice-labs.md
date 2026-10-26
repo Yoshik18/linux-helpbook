@@ -1,160 +1,135 @@
-# Practice investigations
+# 13. Practice with failures, not just happy paths
 
-These labs combine the earlier chapters. Work in a disposable Linux environment
-as your ordinary user. They do not require root, a cloud account or a production
-service. Keep a short record of the symptom, observations, explanation and next
-check. Do not change several things at once and then guess which change helped.
+Use the [practice setup](01-how-linux-works.md). Run these exercises as your
+ordinary user. They change only new lab files or a loopback server you start.
+Expected results below describe the fixture, not a real production incident.
 
-## 1. Did the search succeed, find nothing or fail?
+## 1. Find why a log-checking pipeline lies
 
-**Question:** a log-checking script prints `0` and exits successfully. Does that
-mean the log file was read successfully and had no errors?
-
-This Bash lab creates a small fixture, then deliberately queries a missing file.
-The parentheses isolate shell-option changes from your interactive shell.
+Try this in Bash:
 
 ```bash
 (
     set +e
     set +o pipefail
-    lab=$(mktemp -d) || exit 1
-    printf 'INFO started\nERROR request failed\n' > "$lab/app.log"
-
-    grep -q ERROR "$lab/app.log"
-    printf 'Match status: %s\n' "$?"
-
-    grep -q WARNING "$lab/app.log"
-    printf 'No-match status: %s\n' "$?"
-
-    grep -q ERROR "$lab/missing.log"
-    printf 'Read-error status: %s\n' "$?"
-
-    grep ERROR "$lab/missing.log" | wc -l
-    printf 'Pipeline without pipefail: %s\n' "$?"
-
+    grep ERROR "$LINUX_LAB/missing.log" | wc -l
+    printf 'without pipefail: %s\n' "$?"
     set -o pipefail
-    grep ERROR "$lab/missing.log" | wc -l
-    printf 'Pipeline with pipefail: %s\n' "$?"
-    printf 'Lab directory: %s\n' "$lab"
+    grep ERROR "$LINUX_LAB/missing.log" | wc -l
+    printf 'with pipefail: %s\n' "$?"
 )
 ```
 
-With GNU grep, the first three statuses should be `0`, `1` and `2`. A matching
-line, no match and a read failure are three different outcomes. A script that
-handles only zero/nonzero without considering the command's contract can hide
-a real error or treat a normal no-match result as a failure.
+**Before opening the answer:** did a successful line count prove the log was read?
+What should a script do if no matches is a normal result?
 
-Without `pipefail`, the pipeline takes the status of its last command, `wc`,
-which can successfully count zero input lines even though grep failed to open
-its file. With Bash `pipefail`, the pipeline returns the rightmost nonzero status,
-here `2`. The option does not repair the failed read, and it does not make every
-nonzero result unexpected. Handle the cases your script actually cares about.
+<details>
+<summary>Read the result</summary>
 
-**Check your understanding:** what happens if grep successfully reads a file and
-finds no matching lines while `pipefail` is enabled? Why might `set -e` need care
-in a script that expects that result?
+`wc` can successfully count zero input lines even when grep could not open the
+file. Without pipefail, the pipeline reports wc's status, usually 0. With
+pipefail, Bash reports the rightmost nonzero status, here GNU grep's read-error
+status 2. A valid search with no matches instead returns 1. Handle the command's
+contract explicitly; do not equate all nonzero statuses with the same failure.
 
-Source: [GNU grep exit status](https://www.gnu.org/software/grep/manual/html_node/Exit-Status.html)
-and [Bash pipelines](https://www.gnu.org/software/bash/manual/html_node/Pipelines.html).
+</details>
 
-## 2. Where did the deleted file go?
+## 2. Read a file after removing its name
 
-**Question:** someone removes a file, but the process using it still reads its
-contents. Is the directory listing wrong?
-
-This Python 3 lab creates a 1 MiB file in a private temporary directory and keeps
-one descriptor open while removing that file's name. It never unlinks an
-existing application file. Linux `/proc` must be mounted for the descriptor-path
-observation.
-
-```python
-import os
-import tempfile
-from pathlib import Path
-
-with tempfile.TemporaryDirectory(prefix="linux-open-file-") as directory:
-    path = Path(directory) / "sample.bin"
-    path.write_bytes(b"x" * (1024 * 1024))
-
-    with path.open("rb") as stream:
-        path.unlink()
-        info = os.fstat(stream.fileno())
-        print("Name exists:", path.exists())
-        print("Link count:", info.st_nlink)
-        print("Logical bytes:", info.st_size)
-        print("Still readable:", stream.read(4))
-        descriptor = Path(f"/proc/{os.getpid()}/fd/{stream.fileno()}")
-        print("Descriptor target:", os.readlink(descriptor))
-```
-
-Expect `Name exists: False`, link count `0`, logical bytes `1048576` and readable
-bytes `b'xxxx'`. The descriptor target normally ends in `(deleted)`. The directory
-entry is gone, but the open descriptor still references the file. When there are
-no remaining links and the last open reference closes, its storage can be
-released. The file's logical length is not a precise measure of allocated disk
-blocks or of filesystem-wide free-space changes.
-
-In a real investigation, this is a reason to inspect open files, not a reason
-to truncate random `/proc` descriptors or restart a database without approval.
-Use the [disk-space checklist](../troubleshooting/disk-space.md) to investigate
-capacity, inode usage and other causes of `df`/`du` disagreement.
-
-Source: [`unlink(2)`](https://man7.org/linux/man-pages/man2/unlink.2.html)
-and [`proc_pid_fd(5)`](https://man7.org/linux/man-pages/man5/proc_pid_fd.5.html).
-
-## 3. Is the HTTP service broken, or is the request wrong?
-
-**Question:** a client reaches a server but receives HTTP 404. Should you start by
-changing DNS, restarting the service or checking the requested path?
-
-Use Python 3 and curl in two terminals. In terminal one, serve only a temporary
-lab directory on loopback. If port 8765 is occupied, use another unused port in
-both terminals. Do not expose the server on a public interface.
+Run the complete block, which creates and removes only its own dummy file:
 
 ```bash
-lab=$(mktemp -d) || exit 1
-printf 'service is reachable\n' > "$lab/index.html"
-python3 -m http.server 8765 --bind 127.0.0.1 --directory "$lab"
+(
+    printf 'still readable\n' > "$LINUX_LAB/data/unlinked.txt"
+    exec 3< "$LINUX_LAB/data/unlinked.txt"
+    rm -- "$LINUX_LAB/data/unlinked.txt"
+    readlink "/proc/$BASHPID/fd/3"
+    cat <&3
+    exec 3<&-
+)
 ```
 
-In terminal two:
+<details>
+<summary>Read the result</summary>
+
+The pathname disappears, but descriptor 3 still references the open file. The
+link target normally ends in `(deleted)`, and cat prints `still readable`.
+Closing the last open reference after the last link is removed lets storage be
+released. File length does not directly measure a change in filesystem free
+blocks. `$BASHPID` identifies this Bash subshell; `$$` can still name its parent.
+
+On a real system, investigate with approved open-file inspection. Do not remove
+an active service's files or truncate descriptors as a recovery experiment.
+
+</details>
+
+## 3. Distinguish HTTP 404 from a failed connection
+
+Terminal one, from this repository's root:
+
+```bash
+source fundamentals/labs/setup.sh
+python3 -m http.server 8765 --bind 127.0.0.1 --directory "$LINUX_LAB/notes"
+```
+
+Terminal two:
 
 ```bash
 curl --max-time 3 --output /dev/null --write-out 'HTTP %{http_code}\n' http://127.0.0.1:8765/missing
-printf 'curl status without --fail: %s\n' "$?"
-
+printf 'plain curl: %s\n' "$?"
 curl --fail --max-time 3 http://127.0.0.1:8765/missing
-printf 'curl status with --fail: %s\n' "$?"
-
-curl --fail --max-time 3 http://127.0.0.1:8765/
+printf 'curl with fail: %s\n' "$?"
+curl --fail --max-time 3 http://127.0.0.1:8765/todo.txt
 ```
 
-The first request should show HTTP 404 while curl itself returns `0`. A completed
-HTTP exchange is not the same as a successful application response. With `--fail`,
-curl returns `22` for this HTTP error. The final request should return the text
-from `index.html`. These exit statuses follow curl's contract, not a universal
-meaning shared by all programs.
+Use another unused port in both terminals if needed. Stop your own server with
+Ctrl+C. It serves only the temporary notes directory on loopback.
 
-Stop your server with Ctrl+C in terminal one. Record the evidence: TCP connected,
-an HTTP server answered and one path was missing. This lab does not test DNS or
-TLS, because the URL uses an IP address and plain HTTP. A successful root path
-does not prove every endpoint or dependency is healthy.
+<details>
+<summary>Read the result</summary>
 
-Source: [curl exit codes and `--fail`](https://curl.se/docs/manpage.html)
-and [Python's lab HTTP server](https://docs.python.org/3/library/http.server.html).
+Expect HTTP 404 and plain curl status 0, then `--fail` status 22. The last request
+returns the three todo lines. The 404 proves an HTTP server answered that request;
+it is not a DNS or TCP connection failure. This lab uses an IP and plain HTTP,
+so it does not test DNS or TLS. After stopping the server, repeat the final
+request: a connection error is a different observation from a 404.
 
-## Turn observations into a useful answer
+</details>
 
-For any lab or interview scenario, practice answering:
+## 4. Build a small incident note from the fixture
 
-1. What exactly failed, and for which user, process or client?
-2. Which observation narrows the problem? Which conclusion would be too strong?
-3. What is the smallest next check that separates the remaining possibilities?
-4. If a change is needed, what could it break and how would you reverse it?
+Without changing the source logs, produce:
 
-The goal is to understand why a command is useful, not to run every command in a
-list. Repeat these labs after a few days and explain the result before executing
-them. Then try the shorter troubleshooting guides against your own disposable
-service.
+1. Number of 500 responses.
+2. Most frequent error message.
+3. A list of client addresses with request counts.
+4. A separate file containing only ERROR lines.
 
-[Previous: performance and debugging](12-performance-and-debugging.md) · [Guide index](README.md)
+<details>
+<summary>One answer</summary>
+
+```bash
+awk '$4 == 500 {n++} END {print n+0}' "$LINUX_LAB/logs/access.log"
+grep '^ERROR ' "$LINUX_LAB/logs/app.log" | sort | uniq -c | sort -nr
+awk '{print $1}' "$LINUX_LAB/logs/access.log" | sort | uniq -c
+grep '^ERROR ' "$LINUX_LAB/logs/app.log" > "$LINUX_LAB/incident-errors.log"
+```
+
+There are two 500 responses. `ERROR api timeout` occurs twice. This tells you
+what this tiny fixture contains, not the cause of a real outage. A useful note
+separates those observations from hypotheses and records the time window.
+
+</details>
+
+## After the exercises
+
+Inspect the printed practice path before removing anything. You can keep it
+for another session; the setup never automatically deletes an earlier lab.
+If you choose to clean it up interactively, use `rm -ri -- "$LINUX_LAB"` only
+after verifying that exact path belongs to your practice run. Do not substitute
+a home, application, mount or production path.
+
+[Manual: Bash](https://man7.org/linux/man-pages/man1/bash.1.html)
+· [unlink](https://man7.org/linux/man-pages/man2/unlink.2.html)
+· [curl](https://curl.se/docs/manpage.html)
+· [Previous](12-performance-and-debugging.md) · [Guide index](README.md)

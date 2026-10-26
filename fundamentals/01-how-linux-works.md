@@ -1,58 +1,100 @@
-# 1. How Linux works
+# 1. Get comfortable in the terminal
 
-[Previous: learning path](README.md) · [Index](README.md) · [Next: filesystem and paths](02-filesystem-and-paths.md)
+Start with the commands you use to identify a machine, find your way around and
+get help. Examples use Bash on Linux. You do not need root.
 
-A useful first model is a set of boundaries: hardware, the kernel, and programs running in userspace. When a command fails, identifying the boundary involved is more helpful than treating “Linux” as one large program.
-
-## Kernel, userspace, and distribution
-
-The **kernel** manages CPU scheduling, memory, devices, and access to shared resources. A running application does not normally program a storage controller itself. It requests operations through the kernel, which checks permissions and coordinates access with other processes.
-
-**Userspace** contains applications and supporting software: shells, editors, libraries, package managers, and service managers. Userspace does not mean “unprivileged.” An administrator's shell is still a userspace program, even when it can request operations that an ordinary account cannot.
-
-A **distribution** assembles a kernel with userspace tools, packages, installation choices, update policies, and defaults. Debian and Fedora can run related kernel versions while offering different package managers and software versions. Updating a shell package is not the same operation as booting a new kernel. A kernel release therefore does not identify a complete distribution.
-
-This distinction matters in containers too. A normal Linux container shares its host's kernel but has its own userspace view. Its distribution identification can differ from the host's. A virtual machine, in contrast, normally boots its own kernel. Do not infer where a package came from just by reading the kernel version.
-
-## Terminal and shell are different programs
-
-A **terminal** supplies an input/output interface. A desktop terminal emulator draws text and sends keystrokes; an SSH session can provide a remote terminal. Neither is inherently Bash.
-
-A **shell** interprets commands. Bash, for example, reads command text, performs expansions and redirections, and runs builtins or external programs. [Bash manual](https://man7.org/linux/man-pages/man1/bash.1.html) Changing the terminal's font does not change shell syntax. A script can run without a terminal, and many server programs run without a shell supervising each request.
-
-Consider typing `cat /etc/os-release`. The shell separates the command and its argument, finds the executable, and arranges for it to run. The program opens the file, reads bytes, and writes output. Some operations cross into the kernel; parsing the command line and formatting the text happen in userspace.
-
-The interface for requesting kernel operations is a **system call**, such as opening a file or creating a process. Applications commonly use library wrappers rather than issuing system calls directly. [syscalls(2)](https://man7.org/linux/man-pages/man2/syscalls.2.html) A library function is not automatically a system call: it may do its work entirely in userspace, or make several kernel requests.
-
-## Lab: identify three separate things
-
-Prerequisites: a Linux environment, a shell, and the usual `uname`, `grep`, and `id` utilities. This read-only block needs no administrator privileges. It prints selected system identifiers and numeric account IDs, not passwords, tokens, or a complete environment.
+## Find out which machine and shell you are using
 
 ```bash
-uname -s
-uname -r
+uname -sr
 uname -m
-if [ -r /etc/os-release ]; then
-    grep -E '^(NAME|ID|VERSION_ID)=' /etc/os-release
-elif [ -r /usr/lib/os-release ]; then
-    grep -E '^(NAME|ID|VERSION_ID)=' /usr/lib/os-release
-else
-    printf 'No readable os-release file found\n'
-fi
-id -u
-id -g
+cat /etc/os-release
+whoami
+id
+printf 'Bash version: %s\n' "$BASH_VERSION"
 ```
 
-Observe three different kinds of evidence. `uname -s`, `-r`, and `-m` report the kernel name, release, and machine architecture respectively. [uname(1)](https://man7.org/linux/man-pages/man1/uname.1.html) The release string may include distribution-specific packaging text; it is not a userspace package inventory.
+`uname -s` prints the kernel name, `-r` its release and `-m` the architecture.
+`os-release` identifies the distribution's userspace. A container can report
+Debian there while sharing its host's kernel. `id` also shows numeric IDs and
+groups. Values differ by machine; compare fields, not a sample version number.
 
-The selected `os-release` fields describe the operating system's userspace identity. The specification gives `/etc/os-release` precedence, with `/usr/lib/os-release` as the fallback. [os-release](https://www.freedesktop.org/software/systemd/man/latest/os-release.html) A minimal image might omit it. The two `id` commands show the effective user and group IDs of the command's execution context, not a history of who logged in.
+## Find your current directory
 
-If a command is missing, that establishes a userspace tooling gap, not a broken kernel. If you are connected remotely, the commands describe that remote environment. Record observations locally; even non-secret machine details need not be published.
+```bash
+pwd
+ls
+ls -lah
+cd /etc
+pwd
+cd -
+```
 
-**Validation:** this lab block has not been run. Output values vary; no container/VM comparison or kernel tracing was performed.
+`pwd` prints the current directory. `ls -l` adds modes, ownership, size and time;
+`-a` includes dotfiles and `-h` makes sizes readable. `cd -` returns to the
+previous directory. `cd` with no argument takes you home. An absolute path starts
+with `/`; a relative path starts from your current directory.
 
-## Check your understanding
+## Find a command before installing anything
 
-1. Two machines report the same kernel release but use different package managers. Is that contradictory? Explain which layer supplies each.
-2. Can a process make system calls without an interactive shell? Where does a service fit in the model?
-3. Why might `os-release` inside a container name a different distribution from the host while `uname -r` agrees?
+```bash
+type cd
+type ls
+command -v bash
+command -v ss
+```
+
+In Bash, `cd` is a builtin: changing directory must affect the shell itself.
+External commands are generally found through `PATH`. `type` can identify
+functions and aliases too. `command -v ss` printing nothing and returning nonzero
+means it was not found, not that your network is broken.
+
+## Ask the right help system
+
+```bash
+help cd
+help printf
+ls --help
+```
+
+For external commands, use `man ls` if manual pages are installed. In the usual
+`less` pager, `/pattern` searches, `n` repeats the search and `q` exits. `man 5
+passwd` describes the file format; `man 1 passwd` describes the command. Minimal
+containers may not include `man` or its database.
+
+## Create the practice files
+
+From this repository's root, source the small, reviewable setup script:
+
+```bash
+source fundamentals/labs/setup.sh
+printf '%s\n' "$LINUX_LAB"
+ls -la "$LINUX_LAB"
+```
+
+It creates a private temporary directory containing fictional logs, configuration
+and notes. It does not install anything or touch existing application files.
+Later chapters use `$LINUX_LAB`; run setup again in a new terminal if necessary.
+Each run creates a new directory. It honors `TMPDIR` when set.
+
+## Practice
+
+Find whether `printf` is a builtin, locate the external `bash` executable and
+list hidden practice files without changing directories.
+
+<details>
+<summary>One answer</summary>
+
+```bash
+type printf
+command -v bash
+ls -la "$LINUX_LAB"
+```
+
+The hidden fixture is `.practice`. `ls` without `-a` omits it.
+
+</details>
+
+[Manual: Bash commands and builtins](https://man7.org/linux/man-pages/man1/bash.1.html)
+· [uname](https://man7.org/linux/man-pages/man1/uname.1.html)
+· [Guide index](README.md) · [Next: files and paths](02-filesystem-and-paths.md)

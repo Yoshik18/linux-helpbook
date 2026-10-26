@@ -1,64 +1,70 @@
 # Verification notes
 
-This update was checked on Linux aarch64 with GNU Bash 5.2.37 and Python 3.14.
-Results describe this environment, not every distribution or a production host.
+The command-led guide was checked on Linux aarch64 with GNU Bash 5.2.37 and
+Python 3.14.7. Results describe this environment, not every distribution or a
+production host.
 
 ## Checks run
 
-- The selected examples passed thirteen regression tests: local scope,
-  counters with `set -e`, cleanup preserving failure status, retry argument
-  boundaries and errors, warning logging, configuration parsing, missing option
-  arguments, the permissions lab and the disk-space lab, plus the fundamentals
-  investigations for pipeline status, deleted open files and HTTP error handling.
-- Bash/sh fenced blocks are checked with `bash -n`, and Python fences with Python's
-  parser. These checks do not execute the blocks;
-  illustrative blocks that need caller variables are not all runnable programs.
-- Relative Markdown file links were checked. Heading fragments are not checked.
-- Markdownlint CLI2 0.24.0 passed using `.markdownlint.json`. The configuration
-  preserves existing long lines, heading/list/fence spacing and table alignment
-  rather than reformatting the entire reference. Other rules remain enabled.
-- The local HTTP server and curl exchange passed with an unused loopback port
-  substituted for 8765. Only the temporary lab directory was served.
-- The documented `ps` sorting commands, `free -h` and repeated `vmstat` sampling
-  ran successfully. Permission failure and restoration were tested as a non-root
-  user in a temporary directory. No production processes were signalled.
+- All 22 selected regression tests passed. They cover shell scope, counters,
+  cleanup preserving failure status, retries, logging, configuration parsing,
+  missing option arguments, the existing permissions/disk labs, copying and
+  renaming, hard/symbolic links, an archive round trip, log counts, field filtering,
+  executable permissions, umask, terminating a lab child, a sparse file,
+  misleading pipeline success, a deleted-open file and HTTP error handling.
+- The tests source the actual `fundamentals/labs/setup.sh` into new temporary
+  directories. Direct execution of that script was separately checked: it
+  returns status 2 and explains how to source it.
+- All 124 Bash/sh fences passed `bash -n`. This parses syntax without executing
+  the examples. Commands requiring optional tools, an administrator or an
+  interactive terminal are not made executable merely by this check.
+- All 85 relative Markdown file links resolved. Heading fragments are not checked.
+- Markdownlint CLI2 0.24.0 passed across 23 Markdown files. The configuration
+  preserves the existing long-line/spacing style and allows `details`/`summary`
+  for expandable exercise answers; other HTML elements are still checked.
+- The HTTP test substitutes an unused loopback port for 8765 and serves only
+  temporary fictional notes. It verifies a successful file request and that
+  curl handles HTTP 404 differently with and without `--fail`.
 - `git diff --check` passed.
 
-Run the dependency-free local checks from the repository root:
+Run the local checks from the repository root:
 
 ```bash
 python3 tools/check_docs.py
 python3 tools/test_examples.py
+bash -n fundamentals/labs/setup.sh
 ```
 
-The tests create small temporary fixtures. Set `TMPDIR` to a scratch directory
-if your environment requires it. Tests deliberately execute only selected,
-reviewed snippets; do not use them to execute arbitrary Markdown from strangers.
-Python's unittest output distinguishes skipped tests from passed ones.
+For Markdown linting, install or use Markdownlint CLI2 0.24.0 separately. The
+Python checks use the standard library; the selected examples also require the
+Bash/GNU command-line tools they exercise and curl for the HTTP test.
+
+The tests create small temporary fixtures and remove their own test directories.
+Set `TMPDIR` to a scratch directory if required. They execute selected reviewed
+snippets, not every block in the repository. Do not run the harness against
+unreviewed Markdown from strangers. Unittest distinguishes skipped tests from
+passed ones; this run had no skips.
 
 ## Limits and untested behavior
 
-- The four introductory chapter labs (01–04) have not been executed. Their Bash
-  syntax was checked, and they remain labelled untested. The later process,
-  memory, sparse-file, package-query, loopback and isolation observations were
-  run in this container where the required tools were available.
-
-- `ss`, `dig` and `lsof` were not installed here. Their descriptions were checked
-  against documentation where available; their output was not exercised locally.
-- No working systemd journal was used. The `journalctl` example remains untested.
-- No cloud resources, real service changes, intentional host-wide CPU/memory
-  pressure, filesystem filling, production signals or permission repairs ran.
-- Inode exhaustion was explained but not induced. The deleted-open-file behavior
-  was tested only on the small temporary file in the practice lab, not on a live
-  service. Other kernels, cgroups and filesystems can behave differently.
-- ShellCheck was not available, so this update does not claim a ShellCheck pass.
-- All 70 unique external Markdown URLs were attempted: 64 returned HTTP 200.
-  Six GNU manual section URLs could not be rechecked because this
-  environment reported network unreachable, not HTTP 404. An earlier retrieval
-  of the official Bash manual supported the scope and exit-status explanations.
-  HTTP 200 alone is not proof that a page's contents are correct.
-- This repository had no license file at the start of the change. This PR does
-  not choose a license or change the rights to existing content. Official source
-  links support the explanations; linked material retains its own license.
+- Not every example in chapters 1–13 was executed. Syntax checks and manual
+  reference checks are not behavioral tests. Host observations vary; illustrative
+  output is not a snapshot of the reader's machine.
+- `ss`, `dig`, `lsof`, `systemctl`, `journalctl`, `strace`, `pidstat`, `iostat` and
+  ShellCheck were unavailable in this environment. No pass or output is claimed
+  for these tools. Their examples must be tried separately on a suitable system.
+- Interactive job control, real systemd services/journals, package installation,
+  RPM/DNF systems, live tracing and network capture were not exercised.
+- No cloud resources, real service changes, host-wide CPU/memory pressure,
+  filesystem filling, mounts or production permission repairs ran. Signals in
+  the tests targeted only the child created by that test.
+- Inode exhaustion was not induced. The deleted-open-file test uses a tiny
+  temporary file, not a live service. Filesystems, kernels and cgroups can differ.
+- External URL reachability is checked separately from content correctness.
+  GNU Bash manual section URLs were unreachable from this environment, not
+  confirmed broken. Accessible upstream manual mirrors support the references.
+- This repository had no license file at the start of the change. This update
+  does not choose a license or change the rights to existing content. Linked
+  projects and documentation retain their own licenses and attribution.
 
 [Back to the learning path](README.md)

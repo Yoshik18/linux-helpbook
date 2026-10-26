@@ -7,8 +7,8 @@ quick lookup, or follow the path below to understand what to check and why.
 ## Start here
 
 For a structured introduction, read [Linux fundamentals](fundamentals/README.md).
-It moves from the kernel, files and shell to processes, services, networking,
-isolation and performance, then brings them together in small investigation labs.
+It teaches through commands: file operations, log searches, permissions, processes,
+resources, services, packages and networking, with shared practice files and exercises.
 
 If you need a shorter reference or troubleshooting path, use these notes:
 
