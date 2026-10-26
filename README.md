@@ -6,6 +6,12 @@ quick lookup, or follow the path below to understand what to check and why.
 
 ## Start here
 
+For a structured introduction, read [Linux fundamentals](fundamentals/README.md).
+It moves from the kernel, files and shell to processes, services, networking,
+isolation and performance, then brings them together in small investigation labs.
+
+If you need a shorter reference or troubleshooting path, use these notes:
+
 1. [Linux commands](commands/commands.md): navigation, files, processes and system inspection.
 2. [File and directory permissions](fundamentals/permissions.md): understand access before changing modes.
 3. [Shell scripting](shell-scripting/scripting.md): Bash constructs, arguments, error handling and reusable patterns.
