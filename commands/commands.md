@@ -1,5 +1,22 @@
 # Linux Commands
 
+Quick reference for Linux hosts. Examples assume GNU utilities and Bash where
+shell expansion is used. `systemctl` and `journalctl` require systemd; tools such
+as `htop`, `lsof`, `iostat` and `netstat` may need separate packages. Check the
+installed manual for distribution-specific flags. GNU `sed -i`, `readlink -f`
+and `du --max-depth` are not portable to every OS.
+
+Start with the [learning path](../README.md) for explanations and safe exercises.
+
+## Before changing a system
+
+Most commands here inspect state. `rm`, `mv`, `chmod`, `chown`, `kill`, `usermod`,
+service changes and mounts change it. Check the target and permissions first;
+practice changes only in a disposable directory or lab.
+
+Environment variables and command history can contain credentials. Redact them
+before sharing output. Read-only inspection can also expose sensitive information.
+
 ---
 
 ## System Information & Monitoring
@@ -35,7 +52,7 @@
 | `cd ../..`                     | Go up two directories                       |
 | `mkdir -p path/to/dir`         | Create nested directories                   |
 | `rmdir dir`                    | Remove empty directory                      |
-| `rm -rf dir/`                  | Remove directory and contents forcefully    |
+| `rm -ri disposable-dir/`       | Remove recursively with prompts; destructive, lab only |
 | `cp -v file1 file2`            | Copy with verbose output                    |
 | `mv file1 file2`               | Move/rename files                           |
 | `ln -s target linkname`        | Create symbolic link                        |
@@ -58,7 +75,7 @@
 | `wc -w file`                   | Count words in file                         |
 | `sort file`                    | Sort file contents                          |
 | `sort -r file`                 | Sort in reverse order                       |
-| `uniq file`                    | Remove duplicate lines                      |
+| `uniq file`                   | Collapse adjacent repeated lines; `sort -u file` also reorders |
 | `cut -d',' -f1,3 file.csv`     | Extract specific columns from CSV           |
 
 ---
@@ -87,11 +104,18 @@
 |--------------------------------|---------------------------------------------|
 | `chmod +x script.sh`           | Make file executable                        |
 | `chmod 755 file`               | Set rwxr-xr-x permissions                   |
-| `chmod -R 644 dir/`            | Set permissions recursively                 |
+| `chmod 644 notes.txt`          | Set one regular file to rw-r--r--            |
+| `chmod 755 notes/`             | Set one directory to rwxr-xr-x; permits traversal |
 | `chown user:group file`        | Change owner and group                      |
 | `chgrp staff file`             | Change group only                           |
 | `sudo chown root file`         | Change owner to root                        |
 | `stat file`                    | Show detailed file information              |
+
+Do not apply mode `644` recursively to a directory tree: directories need search
+(`x`) permission to access entries. Modes `644` and `755` are examples, not a
+universal policy; private files often need stricter permissions. See
+[permissions and safe changes](../fundamentals/permissions.md) and the
+[`chmod` manual](https://man7.org/linux/man-pages/man1/chmod.1.html).
 
 ---
 
@@ -108,7 +132,8 @@
 | `bg %1`                        | Put job 1 in background                     |
 | `fg %1`                        | Bring job 1 to foreground                   |
 | `nohup command &`              | Run command immune to hangups               |
-| `kill -9 PID`                  | Force kill process                          |
+| `kill -TERM PID`               | Request termination; check PID and impact first |
+| `kill -KILL PID`               | Force termination without cleanup; last resort |
 | `killall process_name`         | Kill all processes by name                  |
 | `pidof process_name`           | Find process ID by name                     |
 
@@ -153,7 +178,7 @@
 |--------------------------------|---------------------------------------------|
 | `free -h`                      | Show memory usage                           |
 | `df -h`                        | Show disk space usage                       |
-| `du -sh *`                     | Show directory sizes                        |
+| `du -h --max-depth=1 .`        | Include hidden entries when measuring this directory |
 | `du -h --max-depth=1`          | Limit directory depth                       |
 | `iostat 1`                     | Show I/O statistics                         |
 | `vmstat 1`                     | Show system statistics                      |
@@ -215,7 +240,7 @@
 | `xargs`                                | Build command lines from input              |
 | `command \| tee file`                  | Output to both screen and file              |
 | `command1 && command2`                 | Run command2 only if command1 succeeds      |
-| `command1 || command2`                 | Run command2 only if command1 fails         |
+| `command1 \|\| command2`                 | Run command2 only if command1 fails         |
 | `command1 ; command2`                  | Run commands sequentially                   |
 | `command &`                            | Run command in background                   |
 | `watch -n 2 command`                   | Run command every 2 seconds                 |

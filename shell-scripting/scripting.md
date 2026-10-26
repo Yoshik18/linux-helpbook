@@ -1,5 +1,13 @@
 # Shell Scripting Guide
 
+These are Bash examples, not portable POSIX `sh` scripts. `mapfile` and associative
+arrays require Bash 4 or later; the older Bash bundled with some macOS versions
+does not support them. Run `bash --version` before trying those sections.
+
+Some blocks illustrate one construct and need the variables shown in context.
+They are not one script to concatenate. Use disposable files for writes;
+check syntax with `bash -n script.sh` before running your own script.
+
 ## Basic Script Structure
 
 ### Shebang and Header
@@ -11,12 +19,17 @@
 # Date: 2024-01-01
 # Version: 1.0
 
-# Exit on any error
+# Exit on an unhandled failure in contexts where errexit applies
 set -e
 
 # Exit on undefined variables
 set -u
 ```
+
+`set -e` is not a complete error-handling policy. Tests, AND/OR lists and functions
+called as conditions affect when it applies. Check expected failures explicitly.
+With `set -u`, use `${1:-}` for an optional argument rather than an unset `$1`.
+See the [Bash set builtin](https://www.gnu.org/software/bash/manual/html_node/The-Set-Builtin.html).
 
 ### Basic Script Template
 ```bash
@@ -25,7 +38,7 @@ set -u
 # Script configuration
 SCRIPT_NAME=$(basename "$0")
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_FILE="/var/log/script.log"
+LOG_FILE="${LOG_FILE:-./script.log}" # Choose a writable path; do not assume root
 
 # Colors for output
 RED='\033[0;31m'
@@ -63,8 +76,11 @@ PI=3.14159
 # Read-only variables
 readonly CONSTANT="This cannot be changed"
 
-# Local variables (inside functions)
-local_var="only accessible in function"
+# Declare local variables inside a function
+show_status() {
+    local status="inside"
+    printf '%s\n' "$status"
+}
 
 # Export variables for child processes
 export PATH="/usr/local/bin:$PATH"
@@ -178,13 +194,13 @@ done
 counter=0
 while [ $counter -lt 5 ]; do
     echo "Counter: $counter"
-    ((counter++))
+    counter=$((counter + 1))
 done
 
 # Until loop
 until [ $counter -eq 10 ]; do
     echo "Counter: $counter"
-    ((counter++))
+    counter=$((counter + 1))
 done
 
 # C-style for loop
@@ -272,7 +288,7 @@ if [ -x "$file" ]; then
     echo "File is executable"
 fi
 
-# Check if file is empty
+# Check whether a path exists and has a nonzero size
 if [ -s "$file" ]; then
     echo "File is not empty"
 fi
@@ -281,7 +297,7 @@ fi
 ### File Reading
 ```bash
 # Read file line by line
-while IFS= read -r line; do
+while IFS= read -r line || [[ -n "$line" ]]; do
     echo "Line: $line"
 done < "$file"
 
@@ -363,7 +379,7 @@ verbose=false
 help=false
 
 # Parse options
-while getopts "f:vh" opt; do
+while getopts ":f:vh" opt; do
     case $opt in
         f)
             file="$OPTARG"
@@ -376,6 +392,10 @@ while getopts "f:vh" opt; do
             ;;
         \?)
             echo "Invalid option: -$OPTARG" >&2
+            exit 1
+            ;;
+        :)
+            echo "Option -$OPTARG needs an argument" >&2
             exit 1
             ;;
     esac
@@ -448,16 +468,17 @@ check_prerequisites() {
 
 # Cleanup function
 cleanup() {
+    local status=$?
     echo "Cleaning up..."
-    rm -f "$temp_file"
-    exit 0
+    rm -f -- "$temp_file"
+    exit "$status"
 }
 
-# Set trap
-trap cleanup EXIT
-
 # Create temporary file
-temp_file=$(mktemp)
+temp_file=$(mktemp) || exit 1
+
+# Register cleanup only after creating the file
+trap cleanup EXIT
 
 # Your script logic here
 echo "Processing..."
@@ -483,7 +504,7 @@ echo "Replace 'World' with 'Linux': ${str/World/Linux}"
 # Remove prefix/suffix
 filename="file.txt"
 echo "Without extension: ${filename%.txt}"
-echo "Without 'file' prefix: ${filename#file.}"
+echo "Without 'file.' prefix: ${filename#file.}"
 ```
 
 ### Pattern Matching
@@ -577,15 +598,15 @@ readonly TIMEOUT=30
 
 # Functions
 setup_logging() {
-    # Function implementation
+    : # Replace with logging setup
 }
 
 validate_input() {
-    # Function implementation
+    : # Replace with input validation
 }
 
 process_data() {
-    # Function implementation
+    : # Replace with processing logic
 }
 
 # Main logic
@@ -605,9 +626,10 @@ main "$@"
 echo "$variable"  # Good
 echo $variable    # Bad
 
-# Use [[ ]] for tests
-if [[ "$var" = "value" ]]; then  # Good
-if [ "$var" = "value" ]; then    # Also good
+# Use a complete test; [ ] also works for this equality check
+if [[ "$var" = "value" ]]; then
+    printf '%s\n' "Matched"
+fi
 
 # Validate input
 if [[ ! "$1" =~ ^[0-9]+$ ]]; then
@@ -617,24 +639,23 @@ fi
 # Use read -r for input
 read -r user_input
 
-# Escape special characters
-filename=$(printf '%q' "$user_input")
+# Quote file arguments directly; do not use shell-escaped text as a filename
+printf 'Input: %s\n' "$user_input"
 ```
 
 ### Performance Tips
 ```bash
 # Use local variables in functions
 function process() {
-    local var="$1"  # Faster than global
+    local var="$1"  # Keep function state separate from the caller
 }
 
 # Use built-in commands when possible
 # Use printf instead of echo for complex output
 printf "User: %s, Age: %d\n" "$user" "$age"
 
-# Avoid subshells when possible
-# Instead of: result=$(command)
-# Use: command > temp_file && read result < temp_file
+# Use command substitution when you need its output
+# result=$(command) removes trailing newlines; do not add temp files just for speed
 
 # Use arrays for multiple values
 # Instead of: var1, var2, var3
@@ -646,18 +667,27 @@ printf "User: %s, Age: %d\n" "$user" "$age"
 ## Common Patterns
 
 ### Configuration File Parser
+
+This small parser accepts plain `key=value` lines, not shell syntax or a full INI
+format. Quotes remain literal; there is no variable expansion or inline-comment
+handling. Do not `source` a configuration file from an untrusted source.
+
 ```bash
+declare -A config=()
+
 parse_config() {
     local config_file="$1"
     
-    while IFS='=' read -r key value; do
-        # Skip comments and empty lines
-        [[ $key =~ ^[[:space:]]*# ]] && continue
-        [[ -z $key ]] && continue
+    while IFS='=' read -r key value || [[ -n "$key$value" ]]; do
         
         # Remove leading/trailing whitespace
-        key=$(echo "$key" | xargs)
-        value=$(echo "$value" | xargs)
+        key="${key#"${key%%[![:space:]]*}"}"
+        key="${key%"${key##*[![:space:]]}"}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        value="${value%"${value##*[![:space:]]}"}"
+
+        # Skip blank lines and full-line comments, including indented ones
+        [[ -z $key || $key == \#* ]] && continue
         
         # Store in associative array
         config["$key"]="$value"
@@ -681,10 +711,10 @@ log() {
             echo "[$timestamp] INFO: $message" | tee -a "$LOG_FILE"
             ;;
         WARN)
-            echo -e "[$timestamp] WARN: $message" >&2 | tee -a "$LOG_FILE"
+            printf '[%s] WARN: %s\n' "$timestamp" "$message" | tee -a "$LOG_FILE" >&2
             ;;
         ERROR)
-            echo -e "[$timestamp] ERROR: $message" >&2 | tee -a "$LOG_FILE"
+            printf '[%s] ERROR: %s\n' "$timestamp" "$message" | tee -a "$LOG_FILE" >&2
             ;;
     esac
 }
@@ -693,18 +723,28 @@ log() {
 ### Retry Mechanism
 ```bash
 retry() {
+    if (( $# < 2 )); then
+        printf '%s\n' 'Usage: retry POSITIVE_COUNT command [args...]' >&2
+        return 2
+    fi
     local max_attempts="$1"
     shift
-    local command="$*"
     local attempt=1
+
+    if [[ ! "$max_attempts" =~ ^[1-9][0-9]*$ ]] || (( $# == 0 )); then
+        printf '%s\n' 'Usage: retry POSITIVE_COUNT command [args...]' >&2
+        return 2
+    fi
     
     while [ $attempt -le $max_attempts ]; do
-        if $command; then
+        if "$@"; then
             return 0
         else
             echo "Attempt $attempt failed. Retrying..."
-            ((attempt++))
-            sleep 1
+            attempt=$((attempt + 1))
+            if (( attempt <= max_attempts )); then
+                sleep 1
+            fi
         fi
     done
     
@@ -712,3 +752,16 @@ retry() {
     return 1
 }
 ```
+
+For example, `retry 3 curl --fail --max-time 5 https://example.com` preserves each
+argument. Retry only operations that are safe to repeat. This fixed-delay helper
+is for small local scripts, not a production retry policy; it does not add
+exponential backoff or jitter. A function run as an `if` condition must handle its
+own failures explicitly rather than relying on `set -e`.
+
+## Further reading
+
+- [Bash manual: functions and local variables](https://www.gnu.org/software/bash/manual/html_node/Shell-Functions.html)
+- [Bash manual: quoting](https://www.gnu.org/software/bash/manual/html_node/Quoting.html)
+- [Bash manual: traps](https://www.gnu.org/software/bash/manual/html_node/Bourne-Shell-Builtins.html)
+- [ShellCheck](https://www.shellcheck.net/): catches many shell mistakes, but does not prove a script is safe.
