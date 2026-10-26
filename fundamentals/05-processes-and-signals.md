@@ -1,96 +1,70 @@
-# 5. Processes and signals
+# 5. Processes, signals, and shell jobs
 
-[Previous: Users and access](04-users-and-access.md) · [Index](README.md) · [Next: Memory and CPU](06-memory-and-cpu.md)
+A **process** is a running program with its own address space and resources. A **thread** is an execution path within a process; threads share that process's memory and many resources. Linux schedules threads, so process-oriented tools may show one row per process or one row per thread depending on options. A PID is a temporary identifier, not a permanent identity: a process can exit and its PID can later be reused.
 
-A program is executable code; a process is a running instance with memory,
-credentials and open resources. Two terminals running the same editor normally
-have different processes. A process ID (PID) identifies a process within a PID
-namespace, not forever: Linux reuses IDs after processes disappear.
+## Observe before acting
 
-## Starting a program is two different operations
+```bash
+ps -eo pid,ppid,user,stat,etime,pcpu,rss,comm --sort=-pcpu
+ps -T -p "$$" -o pid,tid,stat,comm
+pgrep -a -x bash
+```
 
-The classic shell model is **fork, then exec**. `fork()` creates a child with its
-own PID and a parent PID (PPID). Its address space initially resembles the
-parent's, but Linux uses copy-on-write: most private pages need not be physically
-copied until somebody modifies them. [fork.2](https://man7.org/linux/man-pages/man2/fork.2.html)
+`ps -e` selects all processes; `-o` chooses columns; `--sort=-pcpu` orders highest CPU first (procps syntax). `PPID` is parent PID, `STAT` is state, `ETIME` elapsed runtime, and `RSS` is resident memory, commonly displayed in KiB. CPU values are sampled/averaged according to the tool and interval; a single list is not a live diagnosis. `ps -T` shows threads for the selected process, with `TID` identifying a thread. `pgrep -x` matches the exact process name and `-a` prints its command line; command lines may expose secrets, so redact them before sharing.
 
-`execve()` replaces the calling process's program image. It does **not** create
-another process or change its PID. This distinction explains why a shell can
-prepare redirections in a child, then turn that child into another program.
-Shell built-ins and implementations using other creation interfaces mean not
-every command literally follows that sequence. [execve.2](https://man7.org/linux/man-pages/man2/execve.2.html)
+Common first-letter states include `R` runnable/running, `S` interruptible sleep, `D` uninterruptible sleep (often waiting on I/O), and `Z` exited but not yet reaped. A sleeping process is often healthy. A zombie has already exited: sending it a signal cannot make it exit again; its parent must collect its status. The remaining `STAT` characters are modifiers.
 
-A thread is an execution stream within a process. Threads have separate stacks
-and scheduling identities but share resources such as the address space and
-usually the file descriptor table. Linux schedules threads; one busy thread does
-not imply every thread in that process is busy. [pthreads.7](https://man7.org/linux/man-pages/man7/pthreads.7.html)
+## Signals and safe shutdown
 
-## File descriptors connect programs
+A signal is a notification to a process, not a command to “kill” in the everyday sense. `SIGTERM` (15) requests termination and lets a program clean up; `SIGKILL` (9) cannot be caught and prevents cleanup. Start with observation, confirm the exact target and ownership, and prefer the application's documented shutdown method. PID reuse creates a race between looking up a PID and acting on it; do not paste a stale PID into `kill`.
 
-A file descriptor is a small integer indexing an open resource, not necessarily
-a disk file. Conventionally, 0 is standard input, 1 standard output and 2 standard
-error. Pipes and sockets also use descriptors. Redirection changes what these
-numbers refer to; the receiving program can keep writing to descriptor 1 without
-knowing whether it leads to a terminal or a file.
+This example targets only a child created in the same shell block:
 
-After fork, corresponding descriptors refer to the same underlying open file
-description, so they can share a file offset. Across exec, descriptors normally
-remain open unless marked close-on-exec. This is how a pipeline survives replacing
-the child shell with the requested executable. [fork.2](https://man7.org/linux/man-pages/man2/fork.2.html) [execve.2](https://man7.org/linux/man-pages/man2/execve.2.html)
+```bash
+(
+    sleep 30 &
+    child=$!
+    ps -p "$child" -o pid,ppid,stat,comm
+    kill -TERM "$child"
+    wait "$child"
+    printf 'child status: %s\n' "$?"
+)
+```
 
-## Signals request an action, not always termination
+`$!` is the PID of the most recently started asynchronous command. `kill -TERM` requests a graceful stop; `wait` collects the child's status. Bash commonly reports 143 (128 + signal 15), but exact status presentation is shell-dependent. Do not escalate to `SIGKILL` just because a process is slow; a task in uninterruptible kernel sleep may not respond immediately, even to it.
 
-A signal notifies a process or thread about an event. Its default action might
-terminate, stop, continue or do nothing. Programs can handle or ignore many
-signals. `SIGTERM` requests termination and gives a cooperating application a
-chance to finish work. `SIGKILL` cannot be caught, blocked or ignored; it offers
-no application cleanup. Neither is a promise that unfinished data becomes
-consistent. [signal.7](https://man7.org/linux/man-pages/man7/signal.7.html)
-
-Do not treat `kill -9` as a first troubleshooting step. Confirm ownership,
-identity and consequences before signaling anything; an old copied PID can now
-belong to a different process. For managed applications, coordinate with the
-service owner rather than fighting a supervisor that will start another copy.
-
-In an interactive shell, Ctrl-C normally sends `SIGINT` to the foreground
-process group. Ctrl-Z normally stops it. `jobs` shows that shell's jobs, not all
-processes; a pipeline can be one job containing several processes. `fg` resumes
-a job in the foreground. Background execution does not make a command a managed
-service.
-
-## Read the state before deciding what is wrong
-
-In procps `ps`, `R` means running or runnable; `S` is interruptible sleep, often
-normal waiting. `D` means uninterruptible sleep, usually an I/O-related kernel
-wait. A task in such a wait may not finish exiting even after `SIGKILL` until the
-wait resolves. Investigate the blocked resource rather than escalating signals
-repeatedly. [ps.1](https://man7.org/linux/man-pages/man1/ps.1.html)
-
-A `Z` zombie has **already exited**. The kernel retains a small record so the
-parent can collect its exit status with a wait operation. Another kill cannot
-make a dead process exit again. Persistent zombies suggest a parent or supervisor
-is not reaping children; they are not running copies consuming CPU. [wait.2](https://man7.org/linux/man-pages/man2/wait.2.html)
-
-## Safe observation: your own short-lived child
-
-Run this in Bash with procps `ps`; no root access or signaling is needed:
+## Jobs belong to a shell
 
 ```bash
 sleep 2 &
-child=$!
-ps -p "$child" -o pid,ppid,stat,comm
+job_pid=$!
 jobs -l
-wait "$child"
-printf 'Child exit status: %s\n' "$?"
+wait "$job_pid"
+printf 'exit status: %s\n' "$?"
 ```
 
-Usually `sleep` appears in `S`, its PPID matches the shell, and `wait` returns 0.
-On a slow session it may exit before `ps` runs; that is a timing difference, not
-a failure. Tested in a Linux container; interactive job-control behavior was not
-tested. Never substitute a PID from another session into a termination experiment.
+`&` runs a command asynchronously; `jobs` lists jobs managed by this shell, not all host processes. In an interactive job-control shell, Ctrl+Z suspends a foreground job, `bg` resumes it in the background, and `fg` returns it to the foreground. Closing the terminal or shell can affect jobs; backgrounding is not a service manager or durable scheduler.
 
-## Check your understanding
+## Inspect process relationships and descriptors
 
-1. Why can exec change the program name without changing the PID?
-2. How does an inherited descriptor let output redirection survive exec?
-3. Why are a zombie and a task in `D` different troubleshooting problems?
+```bash
+ps -p "$$" -o pid,ppid,lstart,etime,comm
+ls -l "/proc/$$/fd"
+readlink "/proc/$$/cwd"
+ulimit -n
+```
+
+`$$` is this shell's PID. `/proc/PID/fd` links show open descriptors (0, 1, and 2 normally represent standard input/output/error); access may be restricted. `readlink` reports the process working directory. `ulimit -n` reports this shell's soft open-file limit, not how many files are open and not necessarily a service's limit. Tools such as `pstree -p` can visualize parent/child relationships when installed; a tree does not imply that every descendant should be terminated.
+
+## Practice
+
+Start `sleep 5` in the background, inspect its PID and state, then `wait` for it. Explain why it is normally sleeping rather than using CPU. No signal is needed.
+
+```bash
+sleep 5 &
+p=$!
+ps -p "$p" -o pid,ppid,stat,comm
+wait "$p"
+```
+
+[ps manual](https://man7.org/linux/man-pages/man1/ps.1.html) · [Linux signals](https://man7.org/linux/man-pages/man7/signal.7.html) · [wait](https://man7.org/linux/man-pages/man2/wait.2.html) · [Previous](04-users-and-access.md) · [Index](README.md) · [Next](06-memory-and-cpu.md)

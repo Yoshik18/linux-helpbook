@@ -1,60 +1,71 @@
-# 4. Users and access
+# 4. Understand users, groups, and access
 
-[Previous: shell and text](03-shell-and-text.md) · [Index](README.md) · [Next: processes and signals](05-processes-and-signals.md)
+Every process runs with user and group credentials. For an ordinary file, Linux checks the owner's permissions first, then the matching group permissions, then the permissions for everyone else. Directories use the same mode bits with different effects: read lists names, execute (`x`) searches/traverses names. This distinction explains why a readable file can still be unreachable through a parent directory.
 
-A process requests access using its credentials. The kernel does not decide based on the person at the keyboard or on whether the command sounds administrative. Start a permissions investigation by identifying the process, the object, and the operation that failed.
+## Inspect the identity used by this shell
 
-## Identity is numeric
+```bash
+whoami
+id
+id -u
+id -G
+getent passwd "$(id -u)"
+```
 
-A **UID** identifies a user; a **GID** identifies a group. Names are labels resolved through the system's account lookup configuration. Files record owner IDs, and processes carry user and group credentials, including supplementary groups. [credentials(7)](https://man7.org/linux/man-pages/man7/credentials.7.html) A service account gives a program an identity without requiring an interactive human login.
+`whoami` prints the effective username. `id` reports user/group names and numeric IDs; `-u` prints only the effective UID and `-G` prints group IDs. `getent passwd KEY` queries the configured account database (which can include network sources), using the UID produced by `$(...)`. Account records are not proof that another service uses the same credentials. A process keeps its credentials; adding a user to a group does not update already-running processes.
 
-Real IDs describe process ownership, while effective IDs normally determine its active privileges. Linux file checks technically use filesystem IDs, which ordinarily match the effective IDs. [credentials(7)](https://man7.org/linux/man-pages/man7/credentials.7.html) Most everyday commands do not change these identities, but the distinction matters when inspecting privileged programs.
+## Read owner, mode, and file type
 
-**Authentication** establishes an identity, for example by verifying an SSH key. **Authorization** decides what that identity may do. Successfully logging in does not grant permission to read every file. A service can be denied access even when the same operation succeeds in your interactive shell, because the service has different credentials or restrictions.
+```bash
+ls -ld "$LINUX_LAB" "$LINUX_LAB/config"
+ls -l "$LINUX_LAB/config/private.txt"
+stat -c '%A %a %U:%G %n' "$LINUX_LAB/config/private.txt"
+```
 
-Supplementary groups provide additional group-based access. Processes inherit credentials, so editing account membership does not automatically rewrite every already-running process's group list. [credentials(7)](https://man7.org/linux/man-pages/man7/credentials.7.html) A new login or service restart may be needed after an authorized membership change. Compare the credentials of the process that actually failed, not only an account database entry.
+`ls -ld` shows each named directory itself; without `-d`, `ls` lists contents. Long listings show type/mode, owner, group, size, and time. `stat -c` uses GNU format escapes: `%A` symbolic mode, `%a` octal mode, `%U:%G` owner/group names, `%n` path. The fixture's `private.txt` is mode `600`: its owner has read/write, group and others have no mode-bit access. The initial `-` in a mode display indicates a regular file; `d` indicates a directory.
 
-## Permissions describe operations
+## Change only the permission you intend
 
-Basic mode bits select owner, group, or other permissions. Without an extended ACL, the owner class is used if the UID matches; otherwise a matching group class is used, then other. These are not three opportunities to add permissions together. [path_resolution(7)](https://man7.org/linux/man-pages/man7/path_resolution.7.html)
+```bash
+bash "$LINUX_LAB/bin/hello.sh"
+chmod u+x "$LINUX_LAB/bin/hello.sh"
+"$LINUX_LAB/bin/hello.sh"
+stat -c '%A %n' "$LINUX_LAB/bin/hello.sh"
+```
 
-For regular files, read and write concern contents; execute allows attempting execution, subject to other checks. For directories, read lists names, execute means search/traversal, and write together with search normally permits creating or removing entries. Every directory along a path matters. Removing a file is generally controlled by its parent directory, with extra restrictions in sticky-bit directories. [path_resolution(7)](https://man7.org/linux/man-pages/man7/path_resolution.7.html) [inode(7)](https://man7.org/linux/man-pages/man7/inode.7.html) Use the existing [permissions reference and directory-access exercise](permissions.md) for mode notation and a focused traversal experiment; there is no reason to replace it with a recursive permission reset.
+`bash FILE` asks Bash to read the script, so the file need not have execute permission. `chmod u+x FILE` adds execute permission for the owner (`u`) without replacing other mode bits. Direct execution also requires a valid interpreter line and a filesystem that permits execution; a `noexec` mount can block it. Both fixture invocations print `hello from the lab` when Bash and execution are available.
 
-**Root** is UID 0, but Linux divides privileged operations into capabilities. A privileged process can bypass many basic access checks; capabilities, namespaces, security policies, and read-only mounts still matter. Treat “root can do anything” as an unsafe debugging shortcut, not a complete model.
+Numeric modes encode owner/group/other read (`4`), write (`2`), and execute (`1`) bits. Thus `chmod 600 FILE` means owner read+write, no group/other access. Avoid broad recursive changes: directories need execute/search permission for traversal, unlike ordinary files.
 
-`sudo` runs an authorized command as another identity, commonly root, according to local policy. It is not a repair for an unexplained denial. A broad group membership or permission change may grant much more access than the one operation you intended. This chapter neither changes accounts nor invokes `sudo`.
-
-## Lab: observe creation policy without changing your session
-
-A **umask** removes permission bits from the mode a program requests for a new object. It does not add permissions or change existing files. Without a default ACL, creation uses `requested_mode & ~umask`: ordinary shell-created files requesting `666` become `600` under mask `077`, while directories requesting `777` become `700`. [umask(2)](https://man7.org/linux/man-pages/man2/umask.2.html) This is bit masking, not general arithmetic subtraction.
-
-Prerequisites: Bash, GNU `stat`, and an existing writable scratch parent. This lab changes only its own newly created files. The subshell prevents its umask from affecting later commands in your session. It does not need root.
+## Umask limits new permissions
 
 ```bash
 (
-    lab=$(mktemp -d "${TMPDIR:-/tmp}/linux-access.XXXXXX") || exit 1
-    id -u
-    id -g
-    id -G
     umask 077
-    printf 'practice data\n' > "$lab/private.txt"
-    mkdir "$lab/private-dir"
-    stat -c '%a %n' "$lab/private.txt" "$lab/private-dir"
-    umask 022
-    printf 'another file\n' > "$lab/ordinary.txt"
-    stat -c '%a %n' "$lab/private.txt" "$lab/ordinary.txt"
-    printf 'Retained lab: %s\n' "$lab"
+    printf 'private note\n' > "$LINUX_LAB/notes/new-private.txt"
+    mkdir -p "$LINUX_LAB/private-dir"
+    stat -c '%a %n' "$LINUX_LAB/notes/new-private.txt" "$LINUX_LAB/private-dir"
 )
 ```
 
-Expect `600` and `700`, then `600` and `644`. Changing the umask did not loosen the first file. Numeric IDs depend on your session. The private parent directory also limits traversal: a `644` file inside it is not automatically accessible to everyone.
+In the subshell, `umask 077` removes group/other permissions from subsequently created objects. With the usual requested creation modes and no inherited default ACL, expect file `600` and directory `700`. The parentheses keep the umask change local to this compound command. Umask affects creation, not existing files, and cannot add permission bits that the program did not request.
 
-**Validation:** this lab block has not been run. No account changes, privilege escalation, or cross-user access checks were run. Results may differ under inherited default ACLs: Linux applies default-ACL inheritance rather than the ordinary umask calculation. [umask(2)](https://man7.org/linux/man-pages/man2/umask.2.html)
+## Diagnose path traversal and ACLs
 
-If modes look permissive but access still fails, inspect parent directories, ACLs, mount restrictions, and the service's isolation settings. ACLs add named-user/group rules and a mask; SELinux and AppArmor can impose additional policy through Linux Security Modules. [acl(5)](https://man7.org/linux/man-pages/man5/acl.5.html) [Linux Security Modules](https://docs.kernel.org/admin-guide/LSM/index.html) Do not disable those policies merely to make a test pass.
+```bash
+namei -l "$LINUX_LAB/config/private.txt"
+getfacl "$LINUX_LAB/config/private.txt"
+```
 
-## Check your understanding
+If installed, `namei -l` displays each path component and its mode/owner. To reach a named file, a user needs search (`x`) permission on every parent directory. Directory `r` permits listing names; directory `x` permits lookup/traversal. `getfacl` displays access-control-list entries and the ACL mask, which can limit effective named-user/group permissions; the `acl` utilities may not be installed. SELinux/AppArmor policy, read-only mounts, or other constraints can deny access even when mode bits look permissive. Do not use `chmod 777` or disable protections as a diagnostic shortcut.
 
-1. Why can a fresh login see new group access while an existing service still cannot?
-2. Why does setting a more permissive umask leave an old file unchanged?
-3. Can a file with mode `644` remain unreachable to another user? Explain the directory checks.
+**Try it:** Create a private note, set owner-only read/write access, inspect the numeric mode and each directory in its path.
+
+```bash
+printf 'practice\n' > "$LINUX_LAB/notes/private-note.txt"
+chmod 600 "$LINUX_LAB/notes/private-note.txt"
+stat -c '%a %n' "$LINUX_LAB/notes/private-note.txt"
+namei -l "$LINUX_LAB/notes/private-note.txt"
+```
+
+[Manual: chmod](https://man7.org/linux/man-pages/man1/chmod.1.html) · [umask](https://man7.org/linux/man-pages/man2/umask.2.html) · [Path resolution](https://man7.org/linux/man-pages/man7/path_resolution.7.html) · [Directory-permission lab](permissions.md) · [Previous](03-shell-and-text.md) · [Index](README.md) · [Next](05-processes-and-signals.md)

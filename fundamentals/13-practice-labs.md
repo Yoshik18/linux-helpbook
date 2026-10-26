@@ -1,160 +1,73 @@
-# Practice investigations
+# 13. Practice: turn symptoms into testable hypotheses
 
-These labs combine the earlier chapters. Work in a disposable Linux environment
-as your ordinary user. They do not require root, a cloud account or a production
-service. Keep a short record of the symptom, observations, explanation and next
-check. Do not change several things at once and then guess which change helped.
+These short investigations use the disposable fixture and your own loopback server. Work as an ordinary user. Start by writing down: observed symptom, scope, time, one hypothesis, and a result that would weaken it. A command is useful when you can say what its output does and does not establish.
 
-## 1. Did the search succeed, find nothing or fail?
+## Lab 1: a pipeline reports success when input could not be read
 
-**Question:** a log-checking script prints `0` and exits successfully. Does that
-mean the log file was read successfully and had no errors?
-
-This Bash lab creates a small fixture, then deliberately queries a missing file.
-The parentheses isolate shell-option changes from your interactive shell.
+The lab setup intentionally does not create `missing.log`: this reproduces the read error being investigated. If Bash reports that `$LINUX_LAB` is unset or the setup script cannot be found, that is a separate lab-setup issue.
 
 ```bash
 (
     set +e
     set +o pipefail
-    lab=$(mktemp -d) || exit 1
-    printf 'INFO started\nERROR request failed\n' > "$lab/app.log"
-
-    grep -q ERROR "$lab/app.log"
-    printf 'Match status: %s\n' "$?"
-
-    grep -q WARNING "$lab/app.log"
-    printf 'No-match status: %s\n' "$?"
-
-    grep -q ERROR "$lab/missing.log"
-    printf 'Read-error status: %s\n' "$?"
-
-    grep ERROR "$lab/missing.log" | wc -l
-    printf 'Pipeline without pipefail: %s\n' "$?"
-
+    grep ERROR "$LINUX_LAB/missing.log" | wc -l
+    printf 'pipeline status without pipefail: %s\n' "$?"
     set -o pipefail
-    grep ERROR "$lab/missing.log" | wc -l
-    printf 'Pipeline with pipefail: %s\n' "$?"
-    printf 'Lab directory: %s\n' "$lab"
+    grep ERROR "$LINUX_LAB/missing.log" | wc -l
+    printf 'pipeline status with pipefail: %s\n' "$?"
 )
 ```
 
-With GNU grep, the first three statuses should be `0`, `1` and `2`. A matching
-line, no match and a read failure are three different outcomes. A script that
-handles only zero/nonzero without considering the command's contract can hide
-a real error or treat a normal no-match result as a failure.
+Predict whether the count proves the file was read. `wc` can successfully count empty input, so without `pipefail` its zero status hides grep's read error. With Bash `pipefail`, the pipeline is nonzero (GNU grep commonly returns 2 for an error). A valid search with no matches commonly returns 1 instead. A script should handle “no matches” separately from unreadable input when that distinction matters.
 
-Without `pipefail`, the pipeline takes the status of its last command, `wc`,
-which can successfully count zero input lines even though grep failed to open
-its file. With Bash `pipefail`, the pipeline returns the rightmost nonzero status,
-here `2`. The option does not repair the failed read, and it does not make every
-nonzero result unexpected. Handle the cases your script actually cares about.
+## Lab 2: local HTTP symptoms at different layers
 
-**Check your understanding:** what happens if grep successfully reads a file and
-finds no matching lines while `pipefail` is enabled? Why might `set -e` need care
-in a script that expects that result?
-
-Source: [GNU grep exit status](https://www.gnu.org/software/grep/manual/html_node/Exit-Status.html)
-and [Bash pipelines](https://www.gnu.org/software/bash/manual/html_node/Pipelines.html).
-
-## 2. Where did the deleted file go?
-
-**Question:** someone removes a file, but the process using it still reads its
-contents. Is the directory listing wrong?
-
-This Python 3 lab creates a 1 MiB file in a private temporary directory and keeps
-one descriptor open while removing that file's name. It never unlinks an
-existing application file. Linux `/proc` must be mounted for the descriptor-path
-observation.
-
-```python
-import os
-import tempfile
-from pathlib import Path
-
-with tempfile.TemporaryDirectory(prefix="linux-open-file-") as directory:
-    path = Path(directory) / "sample.bin"
-    path.write_bytes(b"x" * (1024 * 1024))
-
-    with path.open("rb") as stream:
-        path.unlink()
-        info = os.fstat(stream.fileno())
-        print("Name exists:", path.exists())
-        print("Link count:", info.st_nlink)
-        print("Logical bytes:", info.st_size)
-        print("Still readable:", stream.read(4))
-        descriptor = Path(f"/proc/{os.getpid()}/fd/{stream.fileno()}")
-        print("Descriptor target:", os.readlink(descriptor))
-```
-
-Expect `Name exists: False`, link count `0`, logical bytes `1048576` and readable
-bytes `b'xxxx'`. The descriptor target normally ends in `(deleted)`. The directory
-entry is gone, but the open descriptor still references the file. When there are
-no remaining links and the last open reference closes, its storage can be
-released. The file's logical length is not a precise measure of allocated disk
-blocks or of filesystem-wide free-space changes.
-
-In a real investigation, this is a reason to inspect open files, not a reason
-to truncate random `/proc` descriptors or restart a database without approval.
-Use the [disk-space checklist](../troubleshooting/disk-space.md) to investigate
-capacity, inode usage and other causes of `df`/`du` disagreement.
-
-Source: [`unlink(2)`](https://man7.org/linux/man-pages/man2/unlink.2.html)
-and [`proc_pid_fd(5)`](https://man7.org/linux/man-pages/man5/proc_pid_fd.5.html).
-
-## 3. Is the HTTP service broken, or is the request wrong?
-
-**Question:** a client reaches a server but receives HTTP 404. Should you start by
-changing DNS, restarting the service or checking the requested path?
-
-Use Python 3 and curl in two terminals. In terminal one, serve only a temporary
-lab directory on loopback. If port 8765 is occupied, use another unused port in
-both terminals. Do not expose the server on a public interface.
+From the repository root in terminal one:
 
 ```bash
-lab=$(mktemp -d) || exit 1
-printf 'service is reachable\n' > "$lab/index.html"
-python3 -m http.server 8765 --bind 127.0.0.1 --directory "$lab"
+source fundamentals/labs/setup.sh
+python3 -m http.server 8765 --bind 127.0.0.1 --directory "$LINUX_LAB/notes"
 ```
 
 In terminal two:
 
 ```bash
-curl --max-time 3 --output /dev/null --write-out 'HTTP %{http_code}\n' http://127.0.0.1:8765/missing
-printf 'curl status without --fail: %s\n' "$?"
-
-curl --fail --max-time 3 http://127.0.0.1:8765/missing
-printf 'curl status with --fail: %s\n' "$?"
-
-curl --fail --max-time 3 http://127.0.0.1:8765/
+ss -lnt 'sport = :8765'
+curl --connect-timeout 2 --max-time 5 --fail http://127.0.0.1:8765/todo.txt
+curl --max-time 5 --output /dev/null --write-out 'HTTP %{http_code}\n' http://127.0.0.1:8765/missing
 ```
 
-The first request should show HTTP 404 while curl itself returns `0`. A completed
-HTTP exchange is not the same as a successful application response. With `--fail`,
-curl returns `22` for this HTTP error. The final request should return the text
-from `index.html`. These exit statuses follow curl's contract, not a universal
-meaning shared by all programs.
+Use another unused port consistently if needed; stop your own server with Ctrl+C. The listener entry proves a local TCP socket is listening in the observed network namespace, not that remote clients can reach it. The file request proves this HTTP endpoint answered successfully; 404 proves an HTTP response arrived but the requested path was not found. This numeric loopback exercise tests neither DNS nor TLS. After stopping the server, repeat the request: connection failure is not the same as HTTP 404.
 
-Stop your server with Ctrl+C in terminal one. Record the evidence: TCP connected,
-an HTTP server answered and one path was missing. This lab does not test DNS or
-TLS, because the URL uses an IP address and plain HTTP. A successful root path
-does not prove every endpoint or dependency is healthy.
+## Lab 3: permissions are more than the final file mode
 
-Source: [curl exit codes and `--fail`](https://curl.se/docs/manpage.html)
-and [Python's lab HTTP server](https://docs.python.org/3/library/http.server.html).
+```bash
+stat -c '%A %a %n' "$LINUX_LAB/config/private.txt"
+namei -l "$LINUX_LAB/config/private.txt"
+find "$LINUX_LAB/config" -type f -perm /077 -print
+```
 
-## Turn observations into a useful answer
+`stat` checks the file's mode; GNU `namei -l` traces parent components; GNU `find -perm /077` selects any group/other mode bit. These are read-only checks. Explain why a final file's read bit cannot guarantee successful path access, and why a match from `find` deserves review rather than automatic `chmod`.
 
-For any lab or interview scenario, practice answering:
+## Lab 4: follow an evidence trail for a slow request
 
-1. What exactly failed, and for which user, process or client?
-2. Which observation narrows the problem? Which conclusion would be too strong?
-3. What is the smallest next check that separates the remaining possibilities?
-4. If a change is needed, what could it break and how would you reverse it?
+Scenario: a request times out, but host CPU appears mostly idle. Do not assume the network is the cause. Write two competing hypotheses—for example, no listener versus a request accepted but waiting on an application dependency. For each, name an observation that would support it and one that would weaken it. A bounded sequence might be:
 
-The goal is to understand why a command is useful, not to run every command in a
-list. Repeat these labs after a few days and explain the result before executing
-them. Then try the shorter troubleshooting guides against your own disposable
-service.
+1. From the affected client, run `getent ahosts HOST` for the exact hostname. This tests system name lookup, not the application's private resolver or connection.
+2. On the authorized server, run `ss -lnt` and inspect the expected address/port. This checks visible local listeners, not firewall reachability from the client.
+3. Run `curl --connect-timeout 2 --max-time 5 --verbose https://HOST/` only for an endpoint you may contact. Separate lookup, connect, TLS and HTTP progress; verbose output can contain private details.
+4. If connection and HTTP response work but the operation is slow, align application logs and bounded `vmstat 1 5` samples to the same interval. `vmstat` describes system activity, not the specific request.
 
-[Previous: performance and debugging](12-performance-and-debugging.md) · [Guide index](README.md)
+Record what remains unknown. A successful ping or idle CPU does not prove the application is healthy. Stop when evidence distinguishes the hypotheses or state what access/data is missing; do not make live configuration changes as part of the exercise.
+
+## Lab 5: explain a small fixture without overclaiming
+
+```bash
+awk '$4 == 500 {n++} END {print n+0}' "$LINUX_LAB/logs/access.log"
+grep '^ERROR ' "$LINUX_LAB/logs/app.log" | sort | uniq -c | sort -nr
+awk '{print $1}' "$LINUX_LAB/logs/access.log" | sort | uniq -c
+```
+
+The access fixture has two 500 responses; the most frequent error is `ERROR api timeout`. These commands summarize only the supplied fictional records. They do not establish why a real service failed. Write a two-sentence incident note separating observation from a hypothesis and include the log time window if present.
+
+[Manual: Bash pipelines](https://man7.org/linux/man-pages/man1/bash.1.html) · [curl](https://curl.se/docs/manpage.html) · [Previous](12-performance-and-debugging.md) · [Guide index](README.md)

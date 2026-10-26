@@ -1,45 +1,67 @@
 # Linux Helpbook
 
-Linux command references and practical notes for students, junior DevOps/SRE
-engineers and developers working with Linux servers. Use the references for a
-quick lookup, or follow the path below to understand what to check and why.
+A guided set of Linux notes for students and junior engineers learning to work
+with servers. It covers the ideas behind the commands, then shows how to inspect
+and change things safely in a lab. It is not an LPIC syllabus or a wall of flags.
 
-## Start here
+## Learning path
 
-For a structured introduction, read [Linux fundamentals](fundamentals/README.md).
-It moves from the kernel, files and shell to processes, services, networking,
-isolation and performance, then brings them together in small investigation labs.
+Start with [Linux fundamentals](fundamentals/README.md). It begins with the kernel,
+shell and files, then builds through permissions, processes, resources, services,
+packages and networking. Each topic links to a separate quick reference or
+troubleshooting note when you want more detail.
 
-If you need a shorter reference or troubleshooting path, use these notes:
+You can also go straight to a task:
 
-1. [Linux commands](commands/commands.md): navigation, files, processes and system inspection.
-2. [File and directory permissions](fundamentals/permissions.md): understand access before changing modes.
-3. [Shell scripting](shell-scripting/scripting.md): Bash constructs, arguments, error handling and reusable patterns.
-4. [Disk-space troubleshooting](troubleshooting/disk-space.md): capacity, inodes, hidden files and deleted open files.
-5. [Processes and memory](troubleshooting/processes-and-memory.md): distinguish busy, idle and waiting processes.
-6. [Network connectivity](troubleshooting/network-connectivity.md): separate DNS, listening sockets, TCP, TLS and HTTP.
+- [Look up a command](commands/commands.md): what it is for, useful options and links to worked lessons.
+- [Understand file permissions](fundamentals/permissions.md): owner/group/other, directory search and safe changes.
+- [Write Bash scripts](shell-scripting/scripting.md): shell behavior, quoting, arguments, functions and error handling.
+- [Investigate disk space](troubleshooting/disk-space.md): capacity, inodes and why `df` and `du` can disagree.
+- [Investigate slow processes](troubleshooting/processes-and-memory.md): CPU, memory, waits and process state.
+- [Trace a network failure](troubleshooting/network-connectivity.md): DNS, routes, listening sockets, TCP, TLS and HTTP.
+- [Use Vim](vim/vim.md): a small editor reference for reading and editing text.
 
-[Vim cheatsheet](vim/vim.md) is a separate lookup reference. You do not need to
-learn every Vim command before working through the Linux notes.
+## How to use the examples
 
-## Before running examples
+The guides explain what a command reads or changes, why its options matter, and
+what the output can and cannot tell you. Some outputs vary by distribution,
+version, permissions, workload and host configuration. Where a command is
+interactive or mutates state, the guide says so.
 
-- Use a Linux lab, VM or container you control. The notes assume Bash and GNU
-  utilities unless stated otherwise. Some features need Bash 4 or later.
-- Tools such as `ss`, `dig`, `lsof`, `iostat` and `htop` may need packages. Package
-  names and installation commands depend on the distribution.
-- Systemd journal commands need a host with a working systemd journal; many
-  containers do not have one. Process and network visibility can also be limited.
-- Read-only checks are the starting point. Permission changes, signals, file
-  removal, mounts and service changes need separate care. Do not try them against
-  production infrastructure without authorization.
-- Read the expected result and limitations beside each example. Redact private
-  paths, addresses, credentials and application data before sharing output.
+A few lessons use fictional sample files. From the repository root, you can
+create your own practice directory with:
 
-## How these notes are checked
+```bash
+source fundamentals/labs/setup.sh
+printf '%s\n' "$LINUX_LAB"
+```
 
-[Verification notes](VERIFICATION.md) record the checks run for this update and
-what remains untested. A command parsing successfully does not prove it is safe
-or correct for your system. Sources are linked close to the relevant explanation.
+The script creates new files in a private temporary directory and sets
+`LINUX_LAB` for this shell. It does not install software or change existing
+application files. Run it again in another terminal if needed. Examples that
+need an optional tool, systemd host, administrator privileges or a second
+terminal say so; a missing tool is not evidence that the system is broken.
 
-For deeper infrastructure explanations, see [Uptime Engineer](https://uptime.engineer).
+Unless stated otherwise, commands assume Bash on Linux and common GNU/Linux
+utilities. Some minimal containers omit tools and manuals; other Unix systems may
+use different options. Run examples on a Linux VM, container or machine you
+control. Do not experiment with service changes, deletion, mounts, package
+installation or signals on production systems.
+
+## Find your level
+
+- **New to Linux:** source the practice files described above. Then read fundamentals in order, pausing to run commands and explain results in your own words. The [fundamentals index](fundamentals/README.md) has the setup steps.
+- **Know the basics:** use the command reference, then pick a troubleshooting guide and follow its checks from the affected machine.
+- **Preparing for interviews:** practice explaining why you chose a command, what its result proves, and what you would check next.
+
+## Sources and verification
+
+Each technical lesson links to relevant manuals or upstream documentation. The
+[verification notes](VERIFICATION.md) state what was actually checked and what
+was not. Syntax parsing, a successful local lab and a command that has only been
+read in its manual are different kinds of evidence.
+
+The named [Linux Tutorial](https://github.com/samankhalife/linux-Tutorial) is
+another broad Linux learning resource. This repository uses its visible topic
+organization as inspiration, but its explanations and examples here are
+independently written.

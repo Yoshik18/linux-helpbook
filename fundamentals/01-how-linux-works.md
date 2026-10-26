@@ -1,58 +1,78 @@
-# 1. How Linux works
+# 1. Understand the Linux system and your command line
 
-[Previous: learning path](README.md) · [Index](README.md) · [Next: filesystem and paths](02-filesystem-and-paths.md)
+Linux is the kernel: it schedules processes, manages memory and devices, and enforces access controls. A distribution combines that kernel with user-space programs, libraries, package tools, defaults, and release metadata. The shell is one user-space program; it reads commands and starts other programs. This distinction helps explain why a container may identify as Debian but use its host's kernel.
 
-A useful first model is a set of boundaries: hardware, the kernel, and programs running in userspace. When a command fails, identifying the boundary involved is more helpful than treating “Linux” as one large program.
-
-## Kernel, userspace, and distribution
-
-The **kernel** manages CPU scheduling, memory, devices, and access to shared resources. A running application does not normally program a storage controller itself. It requests operations through the kernel, which checks permissions and coordinates access with other processes.
-
-**Userspace** contains applications and supporting software: shells, editors, libraries, package managers, and service managers. Userspace does not mean “unprivileged.” An administrator's shell is still a userspace program, even when it can request operations that an ordinary account cannot.
-
-A **distribution** assembles a kernel with userspace tools, packages, installation choices, update policies, and defaults. Debian and Fedora can run related kernel versions while offering different package managers and software versions. Updating a shell package is not the same operation as booting a new kernel. A kernel release therefore does not identify a complete distribution.
-
-This distinction matters in containers too. A normal Linux container shares its host's kernel but has its own userspace view. Its distribution identification can differ from the host's. A virtual machine, in contrast, normally boots its own kernel. Do not infer where a package came from just by reading the kernel version.
-
-## Terminal and shell are different programs
-
-A **terminal** supplies an input/output interface. A desktop terminal emulator draws text and sends keystrokes; an SSH session can provide a remote terminal. Neither is inherently Bash.
-
-A **shell** interprets commands. Bash, for example, reads command text, performs expansions and redirections, and runs builtins or external programs. [Bash manual](https://man7.org/linux/man-pages/man1/bash.1.html) Changing the terminal's font does not change shell syntax. A script can run without a terminal, and many server programs run without a shell supervising each request.
-
-Consider typing `cat /etc/os-release`. The shell separates the command and its argument, finds the executable, and arranges for it to run. The program opens the file, reads bytes, and writes output. Some operations cross into the kernel; parsing the command line and formatting the text happen in userspace.
-
-The interface for requesting kernel operations is a **system call**, such as opening a file or creating a process. Applications commonly use library wrappers rather than issuing system calls directly. [syscalls(2)](https://man7.org/linux/man-pages/man2/syscalls.2.html) A library function is not automatically a system call: it may do its work entirely in userspace, or make several kernel requests.
-
-## Lab: identify three separate things
-
-Prerequisites: a Linux environment, a shell, and the usual `uname`, `grep`, and `id` utilities. This read-only block needs no administrator privileges. It prints selected system identifiers and numeric account IDs, not passwords, tokens, or a complete environment.
+## Identify the environment
 
 ```bash
-uname -s
-uname -r
+uname -sr
 uname -m
-if [ -r /etc/os-release ]; then
-    grep -E '^(NAME|ID|VERSION_ID)=' /etc/os-release
-elif [ -r /usr/lib/os-release ]; then
-    grep -E '^(NAME|ID|VERSION_ID)=' /usr/lib/os-release
-else
-    printf 'No readable os-release file found\n'
-fi
-id -u
-id -g
+cat /etc/os-release
+whoami
+id
+printf 'shell=%s version=%s\n' "$SHELL" "$BASH_VERSION"
 ```
 
-Observe three different kinds of evidence. `uname -s`, `-r`, and `-m` report the kernel name, release, and machine architecture respectively. [uname(1)](https://man7.org/linux/man-pages/man1/uname.1.html) The release string may include distribution-specific packaging text; it is not a userspace package inventory.
+`uname -s` is the kernel name, `-r` its release; `-m` reports machine architecture. `/etc/os-release` describes the installed distribution's user space, not necessarily the host kernel. `cat` writes that text to standard output. `whoami` prints the effective username; `id` shows effective numeric/user identity and groups. `$SHELL` is often the configured login shell, while `$BASH_VERSION` is set only in Bash—an empty value can mean this is another shell. Output varies by machine; do not treat versions as expected answers.
 
-The selected `os-release` fields describe the operating system's userspace identity. The specification gives `/etc/os-release` precedence, with `/usr/lib/os-release` as the fallback. [os-release](https://www.freedesktop.org/software/systemd/man/latest/os-release.html) A minimal image might omit it. The two `id` commands show the effective user and group IDs of the command's execution context, not a history of who logged in.
+## A command's lifecycle
 
-If a command is missing, that establishes a userspace tooling gap, not a broken kernel. If you are connected remotely, the commands describe that remote environment. Record observations locally; even non-secret machine details need not be published.
+At a prompt, the shell parses words and operators, expands variables and patterns, then runs a builtin/function or searches `PATH` for an executable. It supplies arguments and environment to the process, waits when appropriate, and records an exit status. `cd` must be a shell builtin because a child process cannot change its parent's current directory.
 
-**Validation:** this lab block has not been run. Output values vary; no container/VM comparison or kernel tracing was performed.
+```bash
+type cd
+type ls
+command -v bash
+command -v not-a-real-command
+printf 'status=%s\n' "$?"
+```
 
-## Check your understanding
+`type` reports how this shell resolves a name (builtin, alias, function, or executable). `command -v` prints the resolved command path/name when found; the deliberately absent name prints nothing and returns nonzero. `$?` is the previous command's status; zero conventionally means success. Save it immediately because the next command replaces it. A missing command is not evidence of a broken subsystem.
 
-1. Two machines report the same kernel release but use different package managers. Is that contradictory? Explain which layer supplies each.
-2. Can a process make system calls without an interactive shell? Where does a service fit in the model?
-3. Why might `os-release` inside a container name a different distribution from the host while `uname -r` agrees?
+## Navigate and inspect
+
+```bash
+pwd
+ls
+ls -lah
+cd /etc
+pwd
+cd -
+pwd
+```
+
+`pwd` prints the working directory. `ls -l` shows a detailed listing, `-a` includes dot-names, and `-h` makes sizes human-readable (with `-l`). `cd /etc` changes this shell's directory; an absolute path begins at `/`. `cd -` returns to the previous directory and prints it. `cd` without an operand goes to your home directory. A relative path is interpreted from the current directory.
+
+## Get help at the right layer
+
+```bash
+help cd
+help printf
+ls --help
+man 1 ls
+man 5 passwd
+```
+
+Bash `help` covers builtins; many external programs implement `--help`. `man 1 ls` is the user-command manual section; `man 5 passwd` describes a file format, not the `passwd` program. In the common `less` viewer, `/word` searches, `n` advances to another match, and `q` exits. Minimal systems may omit manuals or a pager.
+
+## Prepare the shared practice files
+
+From the repository root:
+
+```bash
+source fundamentals/labs/setup.sh
+printf '%s\n' "$LINUX_LAB"
+ls -la "$LINUX_LAB"
+```
+
+`source` runs the setup in this shell so its exported `LINUX_LAB` variable remains available. The script creates a new private temporary fixture directory; it does not install software or modify application files. Each run creates a different directory and honors `TMPDIR`. Run it again in a new terminal before later chapter examples.
+
+**Try it:** Determine whether `printf` is a builtin, locate Bash, and list hidden fixture entries. The hidden `.practice` name is omitted unless `ls` receives `-a`.
+
+```bash
+type printf
+command -v bash
+ls -la "$LINUX_LAB"
+```
+
+[Manual: Bash](https://man7.org/linux/man-pages/man1/bash.1.html) · [uname](https://man7.org/linux/man-pages/man1/uname.1.html) · [Guide index](README.md) · [Next: filesystem and paths](02-filesystem-and-paths.md)

@@ -1,108 +1,91 @@
-# 8. Boot, services and logs
+# 8. Inspect boot, services, schedules, and logs
 
-[Previous: Storage and filesystems](07-storage-and-filesystems.md) · [Index](README.md) · [Next: Packages and software](09-packages-and-software.md)
+This chapter describes systems using systemd. Many containers use another process as PID 1 or no service manager at all. PID 1 is the first process in a PID namespace; on a conventional systemd host it is systemd, which manages services and other units. A container's PID 1 may instead be the application process.
 
-Boot moves control from firmware to userspace. Understanding its stages separates
-a missing root filesystem from an application failure. This chapter describes a
-Linux systemd host; other init systems and containers differ.
-
-## How control reaches the service manager
-
-Firmware initializes enough hardware to select something bootable. A boot loader
-such as GRUB loads a kernel and often an initramfs; some firmware can load the
-kernel directly. An **initramfs** is an early userspace archive unpacked into
-memory. It supplies programs and drivers needed to discover and prepare the real
-root filesystem, perhaps unlocking encrypted storage or activating storage
-layers first. It is common, not mandatory for every Linux configuration. [bootup](https://www.freedesktop.org/software/systemd/man/latest/bootup.html)
-
-After the real root is available, early userspace switches to it and hands
-control to the installed init system. PID 1 is the first userspace process in
-its PID namespace. On a typical systemd host, systemd occupies that role and
-coordinates mounts and services. Containers often start a supervisor or an
-application as their own PID 1 instead; their startup is not a replay of the
-host's firmware and kernel boot.
-
-An emergency environment unable to find root points toward drivers, storage
-discovery or root configuration. A working login with a failed web service calls
-for unit and application evidence, not boot-loader changes.
-
-## Units describe relationships, not a serial script
-
-A systemd **unit** describes a managed object. `.service` units describe service
-execution, `.mount` units describe mounts, and `.target` units group related work.
-Many independent units can start in parallel. [systemd.unit](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html)
-
-Two relationships are easily confused:
-
-- `Wants=` and `Requires=` pull other units into an activation transaction.
-  `Wants=` is weaker: a wanted unit's failure does not by itself prevent the
-  requesting unit from starting. `Requires=` creates stronger failure and
-  lifecycle relationships, with details depending on ordering and unit state.
-- `After=` and `Before=` specify ordering **if both units are being started**.
-  They do not pull the other unit in by themselves. `Requires=` alone likewise
-  does not establish startup ordering. [systemd.unit](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html)
-
-Ordering a process after another service is not proof that its API is ready.
-Readiness depends on the service type and protocol; applications still need to
-handle temporarily unavailable dependencies.
-
-## Configuration changes have different effects
-
-`systemctl daemon-reload` makes the manager reread unit files and rebuild its
-dependency view. It does not restart the application or make it reread its own
-configuration. A service `reload` requests application-specific reconfiguration
-when supported. A `restart` stops and starts the service and can interrupt work.
-They are not troubleshooting synonyms. [systemctl](https://www.freedesktop.org/software/systemd/man/latest/systemctl.html)
-
-Similarly, enabling a unit arranges activation links, commonly for boot; it does
-not inherently start it now. A running unit need not be enabled: it could have
-been started manually or pulled in by another unit. No state-changing commands
-are needed for the inspection below.
-
-## Inspect before changing anything
-
-**Prerequisite:** a systemd host with a reachable system manager and permission
-to read its journal. These systemd and journal commands are **untested on this
-container**, whose PID 1 is not systemd. They inspect an existing host without
-installing or restarting services.
+## Identify the environment and inspect units
 
 ```bash
 cat /proc/1/comm
 systemctl --no-pager --failed
-systemctl --no-pager status systemd-journald.service
-systemctl --no-pager cat systemd-journald.service
-systemctl show systemd-journald.service -p ActiveState -p SubState -p FragmentPath
+systemctl --no-pager list-units --type=service --state=running
+systemctl --no-pager list-unit-files --type=service
+```
+
+`/proc/1/comm` shows the command name of PID 1. `systemctl` queries need a reachable systemd manager and may fail in containers or other init environments. `list-units` shows currently loaded runtime units; `list-unit-files` shows installed unit files and enablement information. A unit may be enabled for future activation but not currently running; a running unit need not be enabled. Unit states such as `active`, `inactive`, and `failed` answer different questions from enablement states such as `enabled`, `disabled`, or `static`.
+
+## Inspect one unit and its recent journal
+
+Choose a unit that exists and that you are authorized to inspect. `systemd-journald.service` is only an example; not every system exposes it as expected.
+
+```bash
+unit=systemd-journald.service
+systemctl --no-pager status "$unit"
+systemctl show "$unit" -p ActiveState -p SubState -p MainPID -p FragmentPath
+systemctl cat "$unit"
+journalctl -b -u "$unit" -n 20 --no-pager
+```
+
+`status` summarizes state and recent log lines; it can return nonzero for an inactive or failed unit. `show -p` requests selected properties. `cat` displays unit source and drop-ins, which may contain sensitive paths or arguments. `journalctl -b` selects the current boot, `-u` filters by unit, `-n` limits the number of entries, and `--no-pager` prints directly. Reading permissions vary. A healthy unit state does not prove the application is serving requests.
+
+Other useful focused journal queries:
+
+```bash
 journalctl --list-boots --no-pager
-journalctl -b -u systemd-journald.service -n 30 --no-pager
+journalctl -b -p warning --no-pager
+journalctl --since '30 minutes ago' --until '5 minutes ago' --no-pager
 journalctl -b -k -n 30 --no-pager
 ```
 
-`status` summarizes runtime state and may exit nonzero for inactive or failed
-units. `cat` shows backing configuration, including drop-ins; edited disk files
-may differ from the manager's loaded view before daemon-reload. Journal queries
-show available records, not a guarantee that every event was captured. [systemctl](https://www.freedesktop.org/software/systemd/man/latest/systemctl.html) [journalctl](https://www.freedesktop.org/software/systemd/man/latest/journalctl.html)
+`-p warning` includes warning and more severe priorities; `-k` selects kernel messages. Combine time and unit filters to avoid dumping unrelated logs. `-o short-monotonic` helps compare event order within one boot. Old boot records may be absent because of retention policy or volatile storage, not because no event occurred.
 
-## Logs need time and retention context
+## Find scheduled work without changing it
 
-`-b` selects the current boot; older boots appear only if their journal data was
-retained. Volatile journal storage under `/run/log/journal` is lost on reboot.
-Persistent storage normally uses `/var/log/journal`; `Storage=auto` chooses based
-on that directory's existence. Defaults and overrides vary with systemd version,
-build and distribution, so never assume persistence from the directory name
-alone. Retention limits and rate limiting can also remove or suppress evidence. [journald.conf](https://www.freedesktop.org/software/systemd/man/latest/journald.conf.html)
+```bash
+systemctl list-timers --all
+crontab -l
+```
 
-Wall-clock timestamps can jump during synchronization; timezone display also
-changes comparisons. Within one boot, `journalctl -b -o short-monotonic` displays
-time relative to boot, useful for ordering events. Compare boot identities and
-timezones before correlating different machines. [journalctl](https://www.freedesktop.org/software/systemd/man/latest/journalctl.html)
+The first lists systemd timers visible to the manager; the second lists the current user's cron table. Cron is not necessarily installed or enabled. Cron jobs run with a smaller, different environment than an interactive shell, so use explicit paths and controlled output when authoring one. Do not inspect another user's schedule or add a job without authorization.
 
-Cron launches commands on time-based rules, generally with a smaller environment
-than an interactive shell. It is not continuous service supervision. Systemd
-timers are an alternative; see the [systemd.timer manual](https://www.freedesktop.org/software/systemd/man/latest/systemd.timer.html)
-for calendar and monotonic scheduling behavior.
+## Logs may live elsewhere
 
-## Check your understanding
+If the practice setup provides a log file:
 
-1. What does an initramfs solve before the real root becomes usable?
-2. Why does `After=database.service` neither start the database nor prove readiness?
-3. Why might yesterday's journal be absent even though logging works today?
+```bash
+tail -n 5 "$LINUX_LAB/logs/app.log"
+grep -n -E 'ERROR|WARN' "$LINUX_LAB/logs/app.log"
+```
+
+`tail -n` shows the last lines; `grep -n -E` finds matching alternatives and prints line numbers. `tail -F` follows a filename across common rotation patterns until Ctrl+C. Applications may log to a file, the journal, standard output, or a remote collector; determine the configured destination before concluding logs are missing.
+
+## State-changing actions
+
+Most learners should stick to the inspection commands above. For a service you
+created in a disposable systemd VM, these actions have different effects; do not
+run them against an unfamiliar or production unit:
+
+| Action | What it does | Main risk |
+|---|---|---|
+| `systemctl daemon-reload` | Makes the manager reread unit definitions. It does not reload an application's configuration. | A bad unit file can change how future starts behave. |
+| `systemctl start UNIT` | Requests activation now. | The service may perform work or contact other systems. |
+| `systemctl reload UNIT` | Asks a service that supports reload to reread configuration without a full stop. | Unsupported units may reject it; application behavior varies. |
+| `systemctl restart UNIT` | Stops and starts the service. | Can interrupt requests, jobs or data writes. |
+| `systemctl enable UNIT` | Arranges activation during a future boot; it does not start the unit now. | Changes future boot behavior. |
+| `systemctl enable --now UNIT` | Combines enablement and starting. | Both immediate and future behavior change. |
+
+`UNIT` is a placeholder, not a literal unit name. Only substitute a service you
+created and verified in the disposable VM, after reviewing its unit and recovery
+plan. These commands require suitable permissions; the guide does not ask you to
+create or alter a system service.
+
+## Practice
+
+On a disposable systemd VM, select a unit you confirmed exists and read only its active state and last ten records from the current boot. Do not restart it. Replace the placeholder below with that unit name before running:
+
+```bash
+unit=YOUR_EXISTING_UNIT.service
+systemctl show "$unit" -p ActiveState -p SubState
+journalctl -b -u "$unit" -n 10 --no-pager
+```
+
+[systemctl manual](https://www.freedesktop.org/software/systemd/man/latest/systemctl.html) · [journalctl manual](https://www.freedesktop.org/software/systemd/man/latest/journalctl.html) · [Previous](07-storage-and-filesystems.md) · [Index](README.md) · [Next](09-packages-and-software.md)

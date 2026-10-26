@@ -1,125 +1,67 @@
-# 11. Isolation and security
+# 11. Understand Linux isolation and access controls
 
-[Previous: Networking](10-networking.md) · [Index](README.md) · [Next: Performance and debugging](12-performance-and-debugging.md)
+Linux security is layered. Namespaces give processes different views of resources; cgroups account for and constrain resource use; capabilities divide some privileged operations; file modes and ACLs govern discretionary access. Seccomp and Linux security modules add further restrictions. None is a magic label that proves a process is safe.
 
-## Isolation has several jobs
+Use read-only checks on your own process and the disposable practice files. `/proc` visibility varies with kernel, permissions and container settings. These examples do not create namespaces, change limits or grant privileges.
 
-A container is not a small virtual machine. Ordinary Linux containers run
-processes against a shared host kernel; a VM normally runs a separate guest
-kernel behind a virtualization boundary. A separate filesystem view does not
-remove the kernel attack surface. Container security depends on several
-mechanisms working together, plus runtime configuration and kernel maintenance.
-
-Namespaces change what a process sees. PID namespaces provide process-ID views;
-mount namespaces separate mount tables; network namespaces separate network
-stacks; user namespaces separate identities and privilege scopes. Processes can
-share some namespace types while differing in others. “In a container” is
-therefore not a precise description of every boundary. [namespaces.7](https://man7.org/linux/man-pages/man7/namespaces.7.html)
-
-Cgroups answer a different question: how much resource can a group consume?
-Controllers account for and constrain resources such as CPU time, memory, I/O
-and task counts. A namespace alone does not prevent a workload from exhausting
-memory. A cgroup namespace changes the visible cgroup hierarchy; it does not
-itself impose a memory limit. [cgroup-v2](https://docs.kernel.org/admin-guide/cgroup-v2.html)
-
-## Permission is more than the username
-
-File ownership, mode bits and ACLs establish ordinary access rules. Capabilities
-split traditional root privileges into smaller units, such as network
-administration or bypassing file-access checks. Some capabilities remain very
-broad: `CAP_SYS_ADMIN` should not be treated as a harmless convenience. [capabilities.7](https://man7.org/linux/man-pages/man7/capabilities.7.html)
-
-“Root in the container” is incomplete information. Without user-namespace
-remapping, UID 0 may still be host UID 0, although other controls restrict its
-powers. With a user namespace, UID 0 inside can map to an unprivileged UID
-outside. Capabilities are interpreted in relevant user-namespace scopes, not
-as universal host authority. [user_namespaces.7](https://man7.org/linux/man-pages/man7/user_namespaces.7.html) Neither mapping makes a writable sensitive
-host mount safe.
-
-Seccomp filters restrict system calls and can reject selected operations.
-They do not replace file permissions or provide a complete sandbox on their
-own. [seccomp.2](https://man7.org/linux/man-pages/man2/seccomp.2.html) Linux Security Modules such as SELinux and AppArmor add policy checks;
-an operation can satisfy ordinary permissions and still be denied by policy. [Linux Security Modules](https://docs.kernel.org/admin-guide/LSM/index.html)
-“No new privileges” prevents gaining privileges through execution mechanisms
-such as set-user-ID programs; it is not a label meaning “no privileges exist.”
-
-## Three read-only investigations
-
-These Python 3 examples inspect only the process running the example. They do
-not create namespaces, change cgroups, modify security policy or start a
-container. `/proc/self` refers to the reading process, not a permanently fixed
-PID. Restricted environments may hide interfaces; do not escalate privileges
-to bypass that restriction.
-
-### 1. Inspect namespace membership
+## Namespaces: which view does a process see?
 
 ```bash
-python3 - <<'PY'
-import os
-for kind in ('user', 'pid', 'mnt', 'net', 'cgroup'):
-    path = '/proc/self/ns/' + kind
-    try:
-        print(kind, os.readlink(path))
-    except OSError as error:
-        print(kind, type(error).__name__)
-PY
+ls -l "/proc/$$/ns"
+readlink "/proc/$$/ns/net"
+readlink "/proc/$$/ns/mnt"
+readlink "/proc/$$/ns/pid"
 ```
 
-Values such as `net:[...]` identify namespace objects. Matching identifiers for
-two permitted processes indicate a shared namespace of that type. A number
-alone does not say “secure” or even “container”: compare the relevant
-boundaries, not whether the number looks unusual. [namespaces.7](https://man7.org/linux/man-pages/man7/namespaces.7.html)
+`$$` is this Bash process ID. Namespace links identify the namespace objects for networking, mounts and process IDs. Compare permitted PIDs to see whether they share a view; a matching identifier indicates shared membership, not whether the overall system is secure. A container typically shares the host kernel even when it has separate views. A VM has a separate guest kernel. PID namespace behavior also makes the same process appear under different IDs in different views.
 
-### 2. Inspect identity translation
+## Cgroups: what resource budget applies?
 
 ```bash
-python3 - <<'PY'
-from pathlib import Path
-for name in ('uid_map', 'gid_map'):
-    print(name)
-    print(Path('/proc/self', name).read_text(), end='')
-PY
+cat "/proc/$$/cgroup"
+findmnt -t cgroup,cgroup2
 ```
 
-Each mapping line describes an inside starting ID, an outside starting ID and
-a range length. For example, a mapping of inside UID 0 to outside UID 100000
-would explain why a file's owner looks different across viewpoints. That is
-an illustrative mapping, not expected output. Mapping interpretation depends
-on the reader's user namespace; do not infer complete host authority from one
-line. [user_namespaces.7](https://man7.org/linux/man-pages/man7/user_namespaces.7.html)
+The first reports cgroup membership; the second shows mounted cgroup filesystems when `findmnt` is available. On cgroup v2, a line such as `0::/some/path` identifies membership relative to a hierarchy. Controller files such as `memory.current`, `memory.max`, `cpu.max`, and `memory.events` may be present at the resolved directory. cgroup namespaces can virtualize the visible paths, but membership/view separation alone does not impose a resource limit. v1 uses different controller paths. Parent cgroups can impose tighter limits than a leaf. Do not guess a filesystem path by concatenating membership text: mount roots and namespaces affect mapping. A membership path alone does not tell you the effective limit.
 
-### 3. Inspect resource membership and security state
+## Capabilities: which privileged operations are available?
 
 ```bash
-python3 - <<'PY'
-from pathlib import Path
-print(Path('/proc/self/cgroup').read_text(), end='')
-for line in Path('/proc/self/status').read_text().splitlines():
-    if line.startswith(('CapEff:', 'NoNewPrivs:', 'Seccomp:')):
-        print(line)
-PY
+grep -E '^(Uid|Gid|CapInh|CapPrm|CapEff|CapBnd|NoNewPrivs|Seccomp):' "/proc/$$/status"
+cat "/proc/$$/uid_map"
+cat "/proc/$$/gid_map"
 ```
 
-A cgroup v2 membership line has the form `0::/path`; legacy v1 can have separate
-controller lines. Actual controller files depend on the mounted hierarchy,
-namespace view, kernel and enabled controllers. Do not mechanically append a
-host-visible path to a container's `/sys/fs/cgroup`. [cgroup-v2](https://docs.kernel.org/admin-guide/cgroup-v2.html)
+The status fields report numeric credentials, capability sets as hexadecimal masks, no-new-privileges state and seccomp mode. `CapEff` is the effective set now; it is not a human-readable list. `uid_map`/`gid_map` relate IDs inside this user namespace to IDs outside it. `NoNewPrivs: 1` prevents privilege gains through exec, but does not remove existing authority. `Seccomp: 2` indicates filter mode, not which system calls the filter allows. Do not infer host authority from a displayed username or mask alone. `capsh --print` can decode capabilities when the libcap tools are installed; inspect local help and avoid pasting sensitive process status publicly.
 
-`CapEff` is a hexadecimal capability mask, not a risk score. `Seccomp: 2` means
-filter mode, not proof of a particular allowlist. Membership also does not prove
-limits are configured: inspect the applicable controller settings and ancestors
-when authorized.
+## Permissions: follow the whole path
 
-## Keep the defaults restrictive
+After the shared setup in chapter 1:
 
-Prefer non-root execution, narrow capabilities, enforced runtime security
-profiles and explicit resource budgets. Avoid privileged containers, host
-namespace sharing and sensitive host mounts unless the design genuinely needs
-them and the risks have been reviewed. A denied operation is evidence to
-investigate, not an instruction to disable the control.
+```bash
+id
+stat -c '%A %a %U:%G %n' "$LINUX_LAB/config/private.txt"
+namei -l "$LINUX_LAB/config/private.txt"
+```
 
-## Check your understanding
+When the ACL utilities are installed, inspect the extra access entries too:
 
-- Why can an isolated process list coexist with unrestricted memory consumption?
-- What changes when container UID 0 maps to a nonzero outside UID?
-- Why can a readable file still be blocked by a security policy?
+```bash
+getfacl "$LINUX_LAB/config/private.txt"
+```
+
+The output includes ACL entries and the ACL mask, which can limit named-user or group permissions. If these tools are absent, skip this query; do not install software on a real host just to finish the lesson. Mode bits still do not describe SELinux/AppArmor rules, read-only mounts, or every access condition. A permission failure is evidence to inspect the applicable boundary, not a reason to run `chmod 777` or disable policy.
+
+For review, GNU `find` can locate group/other permission bits in the lab:
+
+```bash
+find "$LINUX_LAB/config" -type f -perm /077 -print
+```
+
+`-perm /077` matches any group or other bit. It flags candidates for review, not necessarily vulnerabilities; intended sharing and parent-directory reachability matter. No permissions are changed.
+
+## Practice: distinguish view from limit
+
+Record your shell's network namespace link and cgroup membership. Ask: which output indicates a different view, and which identifies resource accounting membership? If permitted, compare with a second process you own. Do not launch privileged containers or write cgroup controls for this exercise. Explain why neither output alone demonstrates a secure isolation boundary.
+
+[Manual: namespaces](https://man7.org/linux/man-pages/man7/namespaces.7.html) · [capabilities](https://man7.org/linux/man-pages/man7/capabilities.7.html) · [cgroup v2](https://docs.kernel.org/admin-guide/cgroup-v2.html) · [Previous](10-networking.md) · [Index](README.md) · [Next](12-performance-and-debugging.md)

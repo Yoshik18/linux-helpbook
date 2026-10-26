@@ -1,122 +1,73 @@
-# 10. Networking
+# 10. Debug a network request one layer at a time
 
-[Previous: Packages and software](09-packages-and-software.md) · [Index](README.md) · [Next: Isolation and security](11-isolation-and-security.md)
+A request can fail before it reaches an application: name lookup, route selection, transport connection, TLS negotiation, then HTTP handling. Test from the affected client and preserve the exact hostname, port, time and error. Each check below answers one question; none alone proves end-to-end health.
 
-## Follow the request through separate mechanisms
+The Linux examples use `ip` and `ss` from iproute2. `dig` is commonly supplied by `dnsutils`/`bind-utils`; `curl` may need installing in a disposable lab. Names and packages vary by distribution. Missing tools are not network evidence. Inspection commands do not change configuration. DNS examples can query external infrastructure; use approved names.
 
-An interface is a network attachment: a physical device, virtual Ethernet pair,
-bridge or loopback device. IP addresses belong to interfaces; one interface can
-have several addresses. A prefix describes the network portion of an address,
-not a guarantee that another machine is reachable. [ip-address.8](https://man7.org/linux/man-pages/man8/ip-address.8.html)
-
-Routes tell the kernel where to send traffic. In a routing table, more-specific
-matching prefixes generally win; a default route handles destinations without
-a more-specific match. Policy rules can select different tables, so one printed
-default route is not a complete explanation of every application's path. [ip-route.8](https://man7.org/linux/man-pages/man8/ip-route.8.html)
-
-Name resolution happens before an ordinary hostname-based connection. DNS is
-one possible source. With glibc, Name Service Switch (NSS) configuration decides
-which sources to consult, potentially including `/etc/hosts`, DNS and resolver
-services. Applications using their own resolver may behave differently. [nsswitch.conf.5](https://man7.org/linux/man-pages/man5/nsswitch.conf.5.html)
-
-## Sockets turn addresses into conversations
-
-A socket is a kernel communication endpoint exposed to a process through a file
-descriptor. TCP uses IP addresses plus ports. Within a network namespace, an
-established TCP connection is distinguished by local address, local port,
-remote address and remote port; including the protocol gives the familiar
-five-tuple. Many clients can therefore share one server listening port without
-sharing the same connection.
-
-The TCP handshake establishes transport state, not application health. For
-HTTPS over TCP, TLS negotiation follows connection establishment and adds encryption
-and peer authentication. Certificate trust, hostname matching and application
-responses are separate checks. [HTTP/3](https://www.rfc-editor.org/rfc/rfc9114.html)
-instead runs over QUIC on UDP and does not use this TCP sequence. A successful
-TCP connect cannot prove application health.
-
-Binding chooses a socket's local address. `127.0.0.1` means IPv4 loopback;
-`0.0.0.0` means all local IPv4 addresses, not “localhost” and not a firewall
-exception. [ip.7](https://man7.org/linux/man-pages/man7/ip.7.html) IPv6 has its own addresses and routes: `::1` is loopback and `::`
-is the wildcard. Whether an IPv6 listener also accepts IPv4 depends on socket
-options and system configuration. Never infer dual-stack reachability from a
-port number alone. [ipv6.7](https://man7.org/linux/man-pages/man7/ipv6.7.html)
-
-## Three practical interpretations
-
-The following inspection commands need iproute2 and, for `getent`, NSS tools.
-They do not change routes, addresses or listeners. Missing tools in a minimal
-image are not evidence of a broken network.
-
-### 1. An address is not a usable route
+## 1. What name does this machine resolve?
 
 ```bash
-ip address show dev lo
-ip route get 127.0.0.1
-ip -6 route get ::1
+getent ahosts example.com
 ```
 
-The address listing shows what is assigned to loopback. `route get` asks the
-kernel to resolve a route; it does not send a probe. Check the chosen device
-and source address. An IPv6 lookup can fail if IPv6 is disabled. Even a sensible
-route says nothing about whether a peer application is listening. [ip-route.8](https://man7.org/linux/man-pages/man8/ip-route.8.html)
+`getent` uses the system's configured name-service path (often `/etc/hosts`, DNS, or a local resolver). Returned addresses prove that this lookup path supplied answers at that moment, not that the application uses the same resolver or can reach those addresses. No result may mean lookup failure, filtering, or no matching record.
 
-### 2. A resolved name is not a connection
+To inspect a DNS response directly, if `dig` is installed:
 
 ```bash
-getent ahosts localhost
+dig example.com A
+dig example.com AAAA
+```
+
+`A` asks for IPv4 and `AAAA` for IPv6. Read `status`, answer section, TTL, and responding server; `dig +short` is compact but hides those clues. Direct queries may bypass some system lookup behavior. A cached answer can be stale, and a DNS answer does not establish route or service health.
+
+## 2. Which interface and route would Linux use?
+
+```bash
+ip -br address
+ip route
+ip route get 203.0.113.10
+```
+
+`-br` gives a compact interface/address view. `ip route` lists the main IPv4 routing table; `ip -6 route` lists IPv6. `ip route get ADDRESS` asks the kernel to resolve a destination and usually shows selected interface, source address and next hop. It does not send a packet or test the gateway. Policy routing, VPNs and network namespaces can select other paths. Do not modify routes on a remote machine as an experiment.
+
+## 3. Is a local TCP socket listening on the expected address?
+
+```bash
 ss -lnt
+ss -lnt 'sport = :8080'
 ```
 
-`getent` follows the configured host lookup path rather than testing DNS alone.
-`ss` uses `-l` for listening sockets, `-n` for numeric addresses/ports and `-t`
-for TCP. Compare the listener's address family and bind address with the client's
-actual destination. A loopback listener does not accept traffic addressed to a
-host's external IPv4 address. [ss.8](https://man7.org/linux/man-pages/man8/ss.8.html)
+`-l` shows listening sockets, `-n` keeps numeric addresses/ports, and `-t` selects TCP. The filter narrows the source port. `127.0.0.1:8080` is loopback-only; `0.0.0.0:8080` binds all local IPv4 addresses, subject to firewall and routing. No matching listener is evidence that this network namespace has no visible TCP listener there; permissions, UDP, another namespace or a different port are possible explanations. `ss -p` may show process names when permitted, but also exposes process details.
 
-### 3. Observe both ends of your own connection
+## 4. Test connection and application response separately
 
-This short Python 3 lab binds only IPv4 loopback, chooses an available port and
-closes all sockets on exit. Timeouts prevent indefinite blocking. It serves no
-files and requires no background server. [socket](https://docs.python.org/3/library/socket.html)
+A safe reproducible lab serves only the fixture notes on loopback. From the repository root, terminal one:
 
 ```bash
-python3 - <<'PY'
-import socket
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-    listener.settimeout(2)
-    listener.bind(('127.0.0.1', 0))
-    listener.listen(1)
-    with socket.create_connection(listener.getsockname(), timeout=2) as client:
-        connection, peer = listener.accept()
-        with connection:
-            connection.settimeout(2)
-            print('client:', client.getsockname(), '->', client.getpeername())
-            print('server:', connection.getsockname(), '<-', peer)
-            client.sendall(b'x')
-            assert connection.recv(1) == b'x'
-PY
+source fundamentals/labs/setup.sh
+python3 -m http.server 8765 --bind 127.0.0.1 --directory "$LINUX_LAB/notes"
 ```
 
-The client's local port differs from the listening port. The accepted server
-socket has reversed endpoints. This demonstrates TCP transport, not HTTP or TLS.
+This requires Python 3 and an unused port. It is a teaching server, not production software; do not serve a sensitive directory. In terminal two:
 
-## Host and container are different viewpoints
+```bash
+curl --connect-timeout 2 --max-time 5 --fail http://127.0.0.1:8765/todo.txt
+curl --connect-timeout 2 --max-time 5 --output /dev/null --write-out 'HTTP %{http_code}\n' http://127.0.0.1:8765/missing
+```
 
-Network namespaces separate interfaces, routes and socket tables. [namespaces.7](https://man7.org/linux/man-pages/man7/namespaces.7.html) A
-container's `127.0.0.1` normally refers to its own namespace, not its host.
-Container runtimes may connect namespaces through virtual interfaces, routing,
-NAT or port forwarding; host-network mode changes those assumptions. Inspect
-from the affected viewpoint before changing bind addresses or publishing ports.
+The first should print fixture text; the second should report 404. `--connect-timeout` bounds connection setup; `--max-time` bounds the whole transfer; `--fail` makes HTTP error responses return a nonzero curl status. Without `--fail`, curl can return success for HTTP 404. A 404 proves an HTTP server answered this request, not that the desired resource exists. Stop only your lab server with Ctrl+C.
 
-For symptom-by-symptom diagnosis, continue with the existing
-[network connectivity troubleshooting guide](../troubleshooting/network-connectivity.md).
-The iproute2 commands above were documentation-checked but not executed in this
-validation environment because `ip` and `ss` were unavailable; the loopback lab
-and `getent` example were executed.
+For an authorized HTTPS endpoint:
 
-## Check your understanding
+```bash
+curl --verbose --connect-timeout 3 --max-time 10 --output /dev/null https://example.com/
+```
 
-- Why can name resolution succeed while TLS fails?
-- How can several connections share the same server port?
-- Why might host loopback work while container loopback fails?
+Verbose output shows progress through resolution, connection, TLS and HTTP; it may expose URLs or headers, so review before sharing. A connection refusal differs from timeout; neither uniquely identifies the cause. Do not use `--insecure` to conceal certificate failures. `ping` tests ICMP, not TCP or HTTP. HTTPS may use HTTP/3/QUIC rather than TCP, so identify the protocol before assuming a TCP-only path.
+
+## Practice: where does the request stop?
+
+With the loopback server running, compare `ss` output, a successful file request and a missing-file request. Then stop the server and repeat the request. For each result, state what it proves and one alternative explanation it leaves open. Extend the investigation with `getent`, `dig`, and `ip route get` for a hostname you are allowed to query; these exercise different layers than the numeric loopback lab.
+
+[Manual: ss](https://man7.org/linux/man-pages/man8/ss.8.html) · [ip route](https://man7.org/linux/man-pages/man8/ip-route.8.html) · [curl](https://curl.se/docs/manpage.html) · [Previous](09-packages-and-software.md) · [Index](README.md) · [Next](11-isolation-and-security.md)

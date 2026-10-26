@@ -1,61 +1,83 @@
-# 2. Filesystem and paths
+# 2. Understand the filesystem and work with paths
 
-[Previous: how Linux works](01-how-linux-works.md) · [Index](README.md) · [Next: shell and text](03-shell-and-text.md)
+Linux presents files through one directory tree rooted at `/`; storage devices are attached at mount points within that tree. A path names an entry, not necessarily unique data: hard links can name the same inode, while symbolic links store another path. This model matters when locating files, making backups, and interpreting links.
 
-A pathname is a way to locate an object, not the object itself. Keeping names, file metadata, and open handles separate explains why renaming a file does not necessarily interrupt a program already reading it.
-
-## Follow the tree
-
-An **absolute path** starts at the process's root directory, `/`. A **relative path** starts at its current working directory in ordinary shell use. `.` means the current directory and `..` its parent. Resolving a path walks directory components and checks search permission along the way. [path_resolution(7)](https://man7.org/linux/man-pages/man7/path_resolution.7.html) A readable file can therefore be unreachable through a directory you cannot traverse.
-
-The filesystem hierarchy has conventions, not a promise that every installation looks identical. `/etc` holds machine configuration, `/usr` installed software and shared data, `/var` changing application data such as logs, `/run` runtime state, and `/home` commonly users' home directories. `/proc` and `/sys` expose kernel interfaces rather than ordinary stored documents. [hier(7)](https://man7.org/linux/man-pages/man7/hier.7.html) `/usr` is not the directory for users' personal files. Some distributions make `/bin` a symlink into `/usr/bin`.
-
-A **mount** attaches a filesystem or another mounted view at a directory in this tree. Paths below that mount point refer into the attached view, hiding any previous contents there while it remains mounted. [path_resolution(7)](https://man7.org/linux/man-pages/man7/path_resolution.7.html) One directory tree can span several filesystems. Neither an absolute path nor a familiar directory name tells you which disk stores its bytes. This chapter does not mount or unmount anything.
-
-## Types, inodes, and links
-
-Linux file types include regular files, directories, symbolic links, device nodes, sockets, and FIFOs. [inode(7)](https://man7.org/linux/man-pages/man7/inode.7.html) A socket is an IPC endpoint, not a text file that happens to have an unusual extension. Names beginning with a dot are hidden by default in `ls`; that convention is not access control.
-
-An **inode** carries file metadata, including type, owner IDs, permissions, size, and link count. An inode number is unique within its filesystem, not across the machine. [inode(7)](https://man7.org/linux/man-pages/man7/inode.7.html) A directory entry associates a name with an inode. The filename is not simply another field inside that inode.
-
-A **hard link** adds another name for the same file, not a synchronized copy. Ordinary hard links cannot cross filesystem boundaries because the names must refer to the same filesystem object. [inode(7)](https://man7.org/linux/man-pages/man7/inode.7.html) A **symbolic link** instead stores a pathname to resolve. A relative symlink target is interpreted from the directory containing the link, not the caller's working directory. [path_resolution(7)](https://man7.org/linux/man-pages/man7/path_resolution.7.html) It can point across filesystems or point nowhere.
-
-When a process opens a file, it receives a **file descriptor**, an integer referring to an open file description. That reference is not redirected just because the pathname is later renamed or replaced. [open(2)](https://man7.org/linux/man-pages/man2/open.2.html) Removing the last filename also does not immediately reclaim storage while the file remains open. That is one reason deleting a growing log may not free the space you expected.
-
-## Lab: separate names from open handles
-
-Prerequisites: Bash, GNU `stat`, and standard file utilities on a writable Linux filesystem supporting links. Use an existing private scratch parent; here it is `${TMPDIR:-/tmp}`. Substitute your own scratch parent if learning elsewhere. Only newly created lab files are changed; no files are deleted.
+## Read paths from the current directory
 
 ```bash
-(
-    lab=$(mktemp -d "${TMPDIR:-/tmp}/linux-paths.XXXXXX") || exit 1
-    cd "$lab" || exit 1
-    printf 'first line\n' > original.txt
-    ln original.txt second-name.txt
-    ln -s original.txt shortcut.txt
-    ls -li
-    stat -c '%n inode=%i links=%h type=%F' original.txt second-name.txt shortcut.txt
-    exec 3< original.txt
-    mv original.txt renamed.txt
-    cat second-name.txt
-    cat <&3
-    exec 3<&-
-    readlink shortcut.txt
-    if [ -e shortcut.txt ]; then
-        printf 'Target exists\n'
-    else
-        printf 'Symlink remains, but its target is missing\n'
-    fi
-    printf 'Inspect the retained lab: %s\n' "$lab"
-)
+pwd
+printf 'home=%s\n' "$HOME"
+ls -la /
+ls -ld "$LINUX_LAB" "$LINUX_LAB/config"
 ```
 
-The two regular filenames initially share an inode number and link count of two. GNU `stat` without `-L` describes the symlink itself. After the rename, both reads still print `first line`: one uses the hard link, the other descriptor 3. `readlink` still prints `original.txt`, so the symlink is dangling. The parentheses keep the directory change and descriptor inside a subshell.
+`/` is the root directory; `/home/alex` is an absolute path. `.` means the current directory, `..` its parent, and `~/notes` expands to a path under your home. `pwd` prints the working directory; `$HOME` is an environment variable. `ls -a` includes dotfiles, `-l` gives details, and `-d` reports the named directory itself rather than its contents. Quote variable-based paths so spaces remain part of one operand.
 
-**Validation:** this lab block has not been run. No unlink-while-open or mount experiment was run; those mechanisms are explained above, not claimed as tested here.
+## Create, copy, move, remove
 
-## Check your understanding
+```bash
+mkdir -p "$LINUX_LAB/work/reports"
+touch "$LINUX_LAB/work/empty.txt"
+cp "$LINUX_LAB/notes/todo.txt" "$LINUX_LAB/work/tasks.txt"
+mv "$LINUX_LAB/work/tasks.txt" "$LINUX_LAB/work/reports/tasks.txt"
+ls -lh "$LINUX_LAB/work/reports"
+```
 
-1. Why does renaming the target break this symlink but not the hard link?
-2. Why must you consider the filesystem identity as well as an inode number?
-3. Does an open descriptor have to resolve the original pathname on every read?
+`mkdir -p` creates missing parent directories and tolerates an existing directory. `touch` creates an empty file if absent, otherwise updates timestamps. `cp SOURCE DEST` copies while retaining the source; `mv SOURCE DEST` renames or relocates it. They may replace an existing destination; use `-i` for an interactive confirmation when appropriate. `ls -lh` lists the result with readable sizes.
+
+For cleanup, `rmdir DIR` removes only an empty directory. `rm -i FILE` prompts before removing the named file; removal generally has no undo. Inspect exact paths first. Avoid recursive force deletion, especially with variables or elevated privileges.
+
+## Read without editing
+
+```bash
+cat "$LINUX_LAB/config/app.conf"
+head -n 2 "$LINUX_LAB/logs/app.log"
+tail -n 2 "$LINUX_LAB/logs/app.log"
+nl -ba "$LINUX_LAB/notes/todo.txt"
+```
+
+`cat` prints the whole file. `head -n 2` and `tail -n 2` show the first and last two lines; `nl -ba` numbers even blank lines. For large files, `less FILE` allows scrolling/search without dumping everything. `tail -f FILE` waits for appended data; Ctrl-C stops it. GNU `tail -F` also retries by filename across common log rotations.
+
+## Search by name or size
+
+```bash
+find "$LINUX_LAB" -type f -name '*.log'
+find "$LINUX_LAB" -type f -name '*spaces*'
+find "$LINUX_LAB" -type f -size +1M
+find "$LINUX_LAB" -type f -name '*.txt' -exec wc -l {} +
+```
+
+`find ROOT` walks from the specified root. `-type f` selects regular files; `-name` matches a filename pattern; quoted patterns prevent the shell expanding `*` first. `-size +1M` selects files larger than the unit threshold (GNU find uses 1 MiB here). `-exec wc -l {} +` passes batches of matched path operands safely, including names with spaces; `wc -l` counts newline characters. Preview results before adding actions that change files. Do not parse `ls` output as a filename list.
+
+## Links name data in different ways
+
+```bash
+ln "$LINUX_LAB/notes/todo.txt" "$LINUX_LAB/work/todo-hardlink"
+ln -s ../notes/todo.txt "$LINUX_LAB/work/todo-shortcut"
+stat -c '%n inode=%i links=%h mode=%a' "$LINUX_LAB/notes/todo.txt" "$LINUX_LAB/work/todo-hardlink"
+readlink "$LINUX_LAB/work/todo-shortcut"
+```
+
+`ln` creates a hard link: both names share an inode and file data, on the same filesystem. `ln -s TARGET LINK` creates a symbolic link whose contents are a path; this relative target is resolved from the link's directory. `stat -c` selects a GNU format: `%n` name, `%i` inode number, `%h` hard-link count, `%a` numeric mode. `readlink` prints the stored target. Existing link names make these creation commands fail rather than overwrite them.
+
+## Archive a directory and compare a restore
+
+```bash
+tar -czf "$LINUX_LAB/archive/notes.tar.gz" -C "$LINUX_LAB" notes
+tar -tzf "$LINUX_LAB/archive/notes.tar.gz"
+mkdir -p "$LINUX_LAB/restored"
+tar -xzf "$LINUX_LAB/archive/notes.tar.gz" -C "$LINUX_LAB/restored"
+diff -r "$LINUX_LAB/notes" "$LINUX_LAB/restored/notes"
+```
+
+For `tar`, `-c` creates, `-t` lists, `-x` extracts, `-z` selects gzip compression, and `-f FILE` names the archive. `-C DIR` changes directory before processing the following path; this stores `notes/` rather than an absolute path. `diff -r` compares directory contents recursively: no output and status 0 means equal; status 1 means differences. Inspect an unfamiliar archive's listing and extract in an isolated unprivileged location.
+
+**Try it:** Find `.conf` files, count all `.txt` lines without breaking on spaces, then archive `config/` without an absolute path.
+
+```bash
+find "$LINUX_LAB" -type f -name '*.conf'
+find "$LINUX_LAB" -type f -name '*.txt' -exec wc -l {} +
+tar -czf "$LINUX_LAB/archive/config.tar.gz" -C "$LINUX_LAB" config
+```
+
+[Manual: find](https://man7.org/linux/man-pages/man1/find.1.html) · [tar](https://man7.org/linux/man-pages/man1/tar.1.html) · [inode](https://man7.org/linux/man-pages/man7/inode.7.html) · [Previous](01-how-linux-works.md) · [Index](README.md) · [Next](03-shell-and-text.md)
