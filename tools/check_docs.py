@@ -55,7 +55,14 @@ for path in sorted(ROOT.rglob('*.md')):
         continue
     text = path.read_text()
     relative = path.relative_to(ROOT)
-    if not text.startswith('# '):
+    body = text
+    if body.startswith('---\n'):
+        front_matter = re.match(r'\A---\n.*?\n---\n', body, re.S)
+        if front_matter:
+            body = body[front_matter.end():].lstrip('\n')
+        else:
+            errors.append(f'{relative}: unclosed front matter')
+    if not body.startswith('# '):
         errors.append(f'{relative}: missing top-level title')
     if len(re.findall(r'^```', text, re.M)) % 2:
         errors.append(f'{relative}: unbalanced code fences')
